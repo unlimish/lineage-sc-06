@@ -17,6 +17,12 @@ call it yourself instead of shipping the stock app:
 
     ./tools/analyze-oneseg-blobs.py oneseg-report/ --symbols libonesegdmxdriver
 
+To find out whether those libraries will load on the Android version you are
+porting to, without building it first - point --against at that build's
+system/lib and every DT_NEEDED and undefined symbol is resolved against it:
+
+    ./tools/analyze-oneseg-blobs.py oneseg-report/ --against /tmp/los16/system/lib
+
 Pure standard library on purpose: this has to run on whatever machine happens
 to have the phone plugged into it, without pip. C++ names are demangled with
 c++filt when it is installed, and shown mangled when it is not.
@@ -217,20 +223,45 @@ class Elf:
                     self.end + "IIIIIIIIII", d, off)
             yield sh_type, sh_offset, sh_size, sh_link, sh_entsize
 
+    def undefined_symbols(self):
+        """Names this object imports - what it needs someone else to provide.
+
+        These are the .dynsym entries with st_shndx == SHN_UNDEF. Whether a
+        library loads on a different Android version comes down to whether
+        every one of these resolves there, so this is the list that decides
+        a port - and it can be checked without building anything.
+        """
+        return [n for n, _b in self._syms(want_undef=True)]
+
+    def undefined_required(self):
+        """Undefined symbols that MUST resolve, i.e. the strong ones.
+
+        A weak undefined symbol is optional by definition - the linker binds
+        it to zero when nothing provides it, and the object still loads. Only
+        strong ones can fail a load, so only these belong in a verdict.
+        """
+        return [n for n, b in self._syms(want_undef=True) if b == 1]
+
+    def undefined_weak(self):
+        return [n for n, b in self._syms(want_undef=True) if b == 2]
+
     def exported_symbols(self):
-        """Names defined and exported by this object, via .dynsym.
+        """Names defined and exported by this object.
 
         Section headers are used rather than walking DT_HASH, because Android
         .so files keep them and this stays readable. A fully stripped object
         returns nothing, which the caller reports rather than hiding.
         """
+        return [n for n, _b in self._syms(want_undef=False)]
+
+    def _syms(self, want_undef):
         d = self.data
         sections = list(self._shdrs())
         if not sections:
             return []
 
         SHT_DYNSYM = 11
-        dynsym = next((s for s in sections if s[0] == SHT_DYNSYM), None)
+        dynsym = next((x for x in sections if x[0] == SHT_DYNSYM), None)
         if dynsym is None:
             return []
 
@@ -262,14 +293,14 @@ class Elf:
             else:
                 st_name, _val, _sz, st_info, _other, st_shndx = struct.unpack_from(
                     self.end + "IIIBBH", d, off)
-            if st_shndx == 0:          # SHN_UNDEF - imported, not exported
+            if (st_shndx == 0) != want_undef:
                 continue
-            bind = st_info >> 4        # 0 LOCAL, 1 GLOBAL, 2 WEAK
+            bind = st_info >> 4          # 0 LOCAL, 1 GLOBAL, 2 WEAK
             if bind not in (1, 2):
                 continue
             name = s(st_name)
             if name:
-                out.append(name)
+                out.append((name, bind))
         return sorted(set(out))
 
     def markers(self):
@@ -372,8 +403,153 @@ def show_symbols(sysroot, pattern):
     return 0
 
 
+# The three proprietary libraries the port ships. Everything else the stack
+# had - the demuxer, CPRM, the service layer, the app - was ruled out earlier.
+PORT_LIBS = ["libonesegdmxdriver.so", "libonesegutils.so", "libPGL.so"]
+
+
+def check_port(sysroot, target_dir):
+    """Will the three shipped libraries load on another Android version?
+
+    That question is answerable without building anything. A library loads if
+    every DT_NEEDED is present and every undefined symbol resolves; both are
+    readable straight out of the ELF. Point --against at the system/lib of the
+    Android version you are porting to and this says yes or names what is
+    missing.
+    """
+    if not os.path.isdir(target_dir):
+        print("error: %s is not a directory" % target_dir, file=sys.stderr)
+        return 1
+
+    # What we intend to ship, found in the survey.
+    ours = {}
+    for path in walk_elfs(sysroot):
+        base = os.path.basename(path)
+        if base in PORT_LIBS and base not in ours:
+            ours[base] = path
+    missing_ours = [n for n in PORT_LIBS if n not in ours]
+
+    # What the target Android provides.
+    print("=" * 72)
+    print("Port check: the 1seg libraries against %s" % target_dir)
+    print("=" * 72)
+    print()
+
+    if missing_ours:
+        print("Not in the survey (run tools/oneseg-probe.sh first):")
+        for n in missing_ours:
+            print("  %s" % n)
+        print()
+        if not ours:
+            return 1
+
+    provided = {}          # symbol -> library that defines it
+    target_libs = set()
+    n_scanned = 0
+    for path in walk_elfs(target_dir):
+        try:
+            elf = Elf(path)
+        except (ElfError, struct.error, OSError):
+            continue
+        n_scanned += 1
+        base = os.path.basename(path)
+        target_libs.add(base)
+        so, _n, _r = elf.dynamic()
+        if so:
+            target_libs.add(so)
+        for sym_name in elf.exported_symbols():
+            provided.setdefault(sym_name, base)
+
+    print("target: %d ELF objects, %d distinct symbols" % (n_scanned, len(provided)))
+    if n_scanned == 0:
+        print()
+        print("Nothing readable there. --against wants the system/lib directory")
+        print("of the target build - e.g. the system/lib/ inside an extracted")
+        print("LineageOS 16.0 zip for a d2 device.")
+        return 1
+    print()
+
+    # The libraries we ship also satisfy each other.
+    for name, path in ours.items():
+        try:
+            for sym_name in Elf(path).exported_symbols():
+                provided.setdefault(sym_name, name)
+            target_libs.add(name)
+        except (ElfError, struct.error, OSError):
+            pass
+
+    verdict_ok = True
+    for name in PORT_LIBS:
+        if name not in ours:
+            continue
+        print("-" * 72)
+        print(name)
+        try:
+            elf = Elf(ours[name])
+            _so, needed, _r = elf.dynamic()
+            imports = elf.undefined_required()
+            weak = elf.undefined_weak()
+        except (ElfError, struct.error, OSError) as e:
+            print("  cannot read: %s" % e)
+            verdict_ok = False
+            continue
+
+        miss_lib = [n for n in needed if n not in target_libs]
+        if miss_lib:
+            verdict_ok = False
+            print("  MISSING LIBRARIES:")
+            for n in miss_lib:
+                print("    %s" % n)
+        else:
+            print("  all %d DT_NEEDED present" % len(needed))
+
+        unresolved = [x for x in imports if x not in provided]
+        if unresolved:
+            verdict_ok = False
+            print("  UNRESOLVED SYMBOLS (%d of %d required):"
+                  % (len(unresolved), len(imports)))
+            for x in unresolved[:40]:
+                print("    %s" % x)
+            if len(unresolved) > 40:
+                print("    ... and %d more" % (len(unresolved) - 40))
+        else:
+            print("  all %d required symbols resolve" % len(imports))
+
+        weak_missing = [x for x in weak if x not in provided]
+        if weak_missing:
+            print("  weak and absent (harmless - bound to zero): %s"
+                  % ", ".join(weak_missing[:8]))
+        print()
+
+    print("=" * 72)
+    if verdict_ok:
+        print("Every dependency and symbol resolves against that target.")
+        print()
+        print("That is the static half of the question answered: the linker has")
+        print("no reason to refuse these. What it does not prove is behaviour -")
+        print("a symbol can exist with different semantics, and libutils in")
+        print("particular is C++ whose object layout changed between releases.")
+        print("But there is nothing here to fix before trying it.")
+    else:
+        print("Something is missing. Each unresolved name is a symbol the port")
+        print("has to supply - by shipping the old library alongside, or by")
+        print("adding it to a shim. hardware/samsung/libsamsung_symbols in the")
+        print("d2att tree already does this for other blobs; extend it rather")
+        print("than starting a new one.")
+    return 0 if verdict_ok else 2
+
+
 def main(argv):
     args = argv[1:]
+    against = None
+    if "--against" in args:
+        i = args.index("--against")
+        if i + 1 >= len(args):
+            print("--against needs a directory", file=sys.stderr)
+            return 2
+        against = args[i + 1]
+        del args[i:i + 2]
+
     symbols_of = None
     if "--symbols" in args:
         i = args.index("--symbols")
@@ -388,6 +564,8 @@ def main(argv):
         print(__doc__.strip())
         print("\nusage: %s <oneseg-report dir> [--symbols <libname>]"
               % os.path.basename(argv[0]))
+        print("       %s <oneseg-report dir> --against <target system/lib dir>"
+              % os.path.basename(argv[0]))
         return 2
 
     report = args[0]
@@ -399,6 +577,9 @@ def main(argv):
     sysroot = os.path.join(report, "system")
     if not os.path.isdir(sysroot):
         sysroot = report
+
+    if against:
+        return check_port(sysroot, against)
 
     if symbols_of:
         return show_symbols(sysroot, symbols_of)

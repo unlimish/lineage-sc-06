@@ -126,7 +126,7 @@ kernel/patches/                  SPI 通信トレース用パッチ（ドライ�
 manifests/local_manifest.xml     repo sync 用マニフェスト
 tools/
   oneseg-probe.sh                純正 ROM のワンセグスタックを実機から調査する（最重要）
-  analyze-oneseg-blobs.py        ELF 依存関係の解析 / --symbols でエクスポート関数一覧
+  analyze-oneseg-blobs.py        ELF 解析。--symbols で API 一覧、--against で移植可否判定
   build-android.sh               実機用ツールを正しいフラグでビルド＋PIE 検査
   isdbt-dump.c                   /dev/isdbt を開いて電源を入れ、読めたものを保存する
   oneseg-api-probe.c             純正ライブラリを dlopen してチューナ API を直接叩く
@@ -209,7 +209,14 @@ python3 tools/analyze-oneseg-blobs.py oneseg-report/ --symbols libonesegdmxdrive
 ### 2. LineageOS 16.0 をビルドする
 
 [`docs/03-ビルド手順.md`](docs/03-ビルド手順.md) を参照してください。
-ディスク 300GB 前後、RAM 16GB 以上が必要です。
+ディスク 110〜130GB（浅いクローン前提）、RAM 8GB 以上。
+
+**その前に**、ビルド不要で答えの出る確認があります:
+
+```bash
+# 3つの .so が Android 9 でロードできるかを静的に判定
+python3 tools/analyze-oneseg-blobs.py oneseg-report/ --against /path/to/android9/system/lib
+```
 
 ### 3. 焼く
 
