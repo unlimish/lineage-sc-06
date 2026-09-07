@@ -66,3 +66,32 @@ control exchange; lower it (or leave tracing off) once TS payload starts
 flowing, or the ring buffer fills with video data in seconds.
 
 Off by default, so the patch is safe to carry in a normal build.
+
+---
+
+## 0002-nmi326-free-the-IRQ-on-release.patch
+
+Fixes a use-after-free. `isdbt_release()` resets `irq_status` and `kfree()`s
+`pdev`, but never calls `free_irq()` - and `pdev` is the `dev_id` the
+interrupt was requested with. A process that exits without sending
+IOCTL_ISDBT_INTERRUPT_UNREGISTER leaves the IRQ registered against freed
+memory.
+
+Found by running tools/isdbt-dump on a stock SC-06D, which produced:
+
+```
+WARNING: at kernel/irq/manage.c:1183 __free_irq+0x88/0x1b8()
+Trying to free already-free IRQ 350
+  isdbt_ioctl+0x1e4/0x2fc
+```
+
+That warning is the downstream symptom: a later open gets a fresh `pdev`, and
+its UNREGISTER calls `free_irq()` with a `dev_id` that does not match the
+action still registered from the previous open, so `__free_irq()` walks the
+list, finds nothing, and warns.
+
+Harmless as a warning. The use-after-free behind it is not. Since the
+LineageOS kernel is ours to build, this should go in.
+
+Verified to apply cleanly to both the lineage-16.0 and CM13-era kernels, and
+alongside 0001.

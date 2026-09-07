@@ -131,13 +131,19 @@ static int try_ioctl(int fd, unsigned long req, const char *name)
 
 static void usage(const char *argv0)
 {
-    printf("usage: %s [-s SECONDS] [-o OUTFILE] [-d DEVICE] [-q]\n"
+    printf("usage: %s [-s SECONDS] [-o OUTFILE] [-d DEVICE] [-n] [-q]\n"
            "\n"
            "  -s SECONDS   how long to read for (default 10)\n"
            "  -o OUTFILE   write everything read to this file\n"
            "  -d DEVICE    read from this path instead of " DEV_PATH "\n"
            "               (a captured .ts file works, which is how the TS\n"
            "                detection here was checked without hardware)\n"
+           "  -n           skip poll() and read() blindly.\n"
+           "               The driver only reports POLLIN after its interrupt\n"
+           "               handler fires, and the handler only fires once the\n"
+           "               tuner has something to say - so before tuning, poll\n"
+           "               times out forever. This reads the SPI bus anyway,\n"
+           "               which tells you whether the chip answers at all.\n"
            "  -q           no hexdump of the first bytes\n"
            "\n"
            "Run as root: /dev/isdbt is system:system on stock.\n",
@@ -146,7 +152,7 @@ static void usage(const char *argv0)
 
 int main(int argc, char **argv)
 {
-    int seconds = 10, quiet = 0, opt;
+    int seconds = 10, quiet = 0, opt, blind = 0, blind_tried = 0;
     const char *outpath = NULL;
     const char *devpath = DEV_PATH;
     int fd = -1, out = -1, rc = 1;
@@ -155,12 +161,13 @@ int main(int argc, char **argv)
     int reads = 0, timeouts = 0, first = 1;
     time_t deadline;
 
-    while ((opt = getopt(argc, argv, "s:o:d:qh")) != -1) {
+    while ((opt = getopt(argc, argv, "s:o:d:nqh")) != -1) {
         switch (opt) {
         case 's': seconds = atoi(optarg); break;
         case 'o': outpath = optarg;       break;
         case 'd': devpath = optarg;       break;
         case 'q': quiet = 1;              break;
+        case 'n': blind = 1;              break;
         default:  usage(argv[0]); return (opt == 'h') ? 0 : 2;
         }
     }
@@ -240,13 +247,46 @@ read_loop:
         pfd.events = POLLIN;
         pfd.revents = 0;
 
-        int pr = poll(&pfd, 1, 500);
-        if (pr < 0) {
-            if (errno == EINTR) continue;
-            printf("poll: %s\n", strerror(errno));
-            break;
+        if (!blind) {
+            int pr = poll(&pfd, 1, 500);
+            if (pr < 0) {
+                if (errno == EINTR) continue;
+                printf("poll: %s\n", strerror(errno));
+                break;
+            }
+            if (pr == 0) {
+                timeouts++;
+                /*
+                 * isdbt_poll() only sets POLLIN after isdbt_irq_handler() has
+                 * run, and that only happens when the tuner asserts its
+                 * interrupt line - which an untuned chip never does. So poll
+                 * timing out here is the expected state, not a fault. Try one
+                 * blind read anyway: whatever the SPI bus returns says
+                 * something about whether the chip is answering.
+                 */
+                if (timeouts == 3 && !blind_tried) {
+                    blind_tried = 1;
+                    printf("poll has timed out 3 times - the driver's interrupt\n"
+                           "handler has not fired, which is expected before tuning.\n"
+                           "Trying one blind read to see if the SPI bus answers ...\n");
+                    {
+                        ssize_t bn = read(fd, buf, sizeof buf);
+                        if (bn > 0) {
+                            printf("  blind read returned %zd bytes:\n", bn);
+                            if (!quiet) hexdump(buf, (size_t)bn < 64 ? (size_t)bn : 64);
+                        } else if (bn == 0) {
+                            printf("  blind read returned 0 (nothing queued)\n");
+                        } else {
+                            printf("  blind read failed: %s\n", strerror(errno));
+                        }
+                    }
+                    printf("\n");
+                }
+                continue;
+            }
         }
-        if (pr == 0) { timeouts++; continue; }
+
+        if (blind) usleep(50 * 1000);
 
         n = read(fd, buf, sizeof buf);
         if (n < 0) {
@@ -306,11 +346,13 @@ read_loop:
     if (total == 0) {
         printf("Nothing came back. That is the expected result at this stage:\n"
                "the chip has had no firmware and no channel, so it has nothing\n"
-               "to send. What matters is that open and POWER_ON succeeded and\n"
-               "dmesg shows isdbt_gpio_on - the path to the tuner is open.\n\n"
-               "Next: find the tune sequence.\n"
-               "  python3 tools/analyze-oneseg-blobs.py oneseg-report/ \\\n"
-               "      --symbols libonesegdmxdriver\n");
+               "to send, and the driver's interrupt never fires - which is why\n"
+               "poll only ever times out.\n\n"
+               "What matters is that open and POWER_ON succeeded and that dmesg\n"
+               "shows isdbt_gpio_on. The path to the tuner is open and the\n"
+               "hardware responds.\n\n"
+               "Next: drive the tuner through the stock library.\n"
+               "  tools/oneseg-api-probe.c  (see docs/07 section 5)\n");
     } else {
         printf("Bytes came back. Check %s with:\n",
                outpath ? outpath : "the output (re-run with -o FILE)");

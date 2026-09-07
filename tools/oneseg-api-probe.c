@@ -39,11 +39,25 @@
  * must itself be a dynamically linked Bionic binary. (isdbt-dump.c has no
  * such constraint and builds with a plain apt cross-compiler.)
  *
- *   export ANDROID_NDK=/path/to/android-ndk-r21e
+ * There is no Debian package for a usable NDK, so fetch it directly. No
+ * account, no SDK manager; about 1GB.
+ *
+ *   cd ~
+ *   wget https://dl.google.com/android/repository/android-ndk-r21e-linux-x86_64.zip
+ *   unzip -q android-ndk-r21e-linux-x86_64.zip
+ *   export ANDROID_NDK="$HOME/android-ndk-r21e"
+ *
+ * Then, from the repository root:
+ *
  *   "$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi16-clang" \
  *       -O2 -o oneseg-api-probe tools/oneseg-api-probe.c -ldl
  *
- * Use r21e or older: later NDKs dropped the API levels this device needs.
+ * Check it before pushing - "file oneseg-api-probe" should say
+ * "ELF 32-bit LSB ... ARM ... dynamically linked".
+ *
+ * r21e is deliberate: it is the last NDK series that still targets API 16,
+ * and this device is API 15. Newer NDKs start at API 21 and their binaries
+ * will not start here.
  *
  * RUN
  *

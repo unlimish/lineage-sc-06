@@ -1,0 +1,66 @@
+From: lineage-sc-06
+Subject: [PATCH] nmi326: free the IRQ on release instead of leaking it
+
+isdbt_release() resets irq_status and kfree()s pdev, but never calls
+free_irq(). pdev is the dev_id the interrupt was requested with, so a process
+that exits without sending IOCTL_ISDBT_INTERRUPT_UNREGISTER leaves the IRQ
+registered against freed memory. The next interrupt runs the handler on a
+freed pdev.
+
+It also produces a confusing symptom later. A subsequent open gets a fresh
+pdev, REGISTER/ENABLE/DISABLE walk the state machine normally, and then
+UNREGISTER calls free_irq() with the new pdev - which does not match the
+dev_id of the action still registered from the previous open. __free_irq()
+walks the action list, finds no match, and warns:
+
+  WARNING: at kernel/irq/manage.c:1183 __free_irq+0x88/0x1b8()
+  Trying to free already-free IRQ 350
+  [<c050f0cc>] (isdbt_ioctl+0x1e4/0x2fc) from ...
+
+Observed on a stock SC-06D (4.0.4) while probing the tuner. Harmless in
+itself, but it points at the use-after-free above.
+
+Free the interrupt in release() when userspace did not. free_irq() can
+sleep, so it runs outside the spinlock; the decision is taken under the lock
+so a concurrent ioctl cannot race the state transition.
+
+diff --git a/drivers/media/nmi326/nmi326.c b/drivers/media/nmi326/nmi326.c
+index 5c93e0d..e53f450 100644
+--- a/drivers/media/nmi326/nmi326.c
++++ b/drivers/media/nmi326/nmi326.c
+@@ -127,11 +127,35 @@ static int isdbt_open(struct inode *inode, struct file *filp)
+ static int isdbt_release(struct inode *inode, struct file *filp)
+ {
+ 	struct ISDBT_OPEN_INFO_T *pdev;
++	unsigned long flags;
++	int registered;
++
+ 	pdev = (struct ISDBT_OPEN_INFO_T *)(filp->private_data);
+ 
+ 	NM_KMSG("<isdbt> isdbt release\n");
++
++	/*
++	 * The interrupt was requested with pdev as its dev_id. Releasing the
++	 * file without freeing it leaves the IRQ pointing at memory this
++	 * function is about to kfree(), so the next interrupt would run the
++	 * handler against a freed pdev - and a later UNREGISTER from a new
++	 * open would call free_irq() with a dev_id the registered action does
++	 * not match, which is the "Trying to free already-free IRQ" warning.
++	 *
++	 * Free it here if userspace did not. free_irq() may sleep, so it has
++	 * to happen outside the spinlock; the flag is read under the lock so
++	 * a concurrent ioctl cannot race the state.
++	 */
++	spin_lock_irqsave(&pdev->isr_lock, flags);
++	registered = (pdev->irq_status != DTV_IRQ_DEINIT);
+ 	pdev->irq_status = DTV_IRQ_DEINIT;
+ 	g_bCatchIrq = 0;
++	spin_unlock_irqrestore(&pdev->isr_lock, flags);
++
++	if (registered) {
++		NM_KMSG("<isdbt> release: freeing IRQ left registered\n");
++		free_irq(gpio_cfg.irq, pdev);
++	}
+ 
+ 	kfree(pdev->rwBuf);
+ 	kfree((void *)pdev);
