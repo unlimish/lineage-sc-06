@@ -239,15 +239,25 @@ static int safe_call(void *fp, const char *name,
     return rc;
 }
 
-/* Print a data symbol as a string, without running off the end of memory. */
-static void print_str_sym(const char *name)
+/*
+ * Read a string out of a data symbol.
+ *
+ * The symbol may be either a char array or a pointer to one, and dlsym gives
+ * the same thing for both: the address of the object. Guessing wrong prints
+ * the raw pointer bytes, which is what the first version of this did:
+ *
+ *   ___Date          i..@d..@}..@@
+ *
+ * Those '@' are 0x40 - the high byte of addresses like 0x4012xxxx - so
+ * ___Date, ___Revision and ___URL are three adjacent char* variables being
+ * read as one array. Try both readings and keep whichever looks like text.
+ */
+static size_t printable_run(const char *p, char *dst, size_t dstsz)
 {
     struct sigaction sa, old_segv;
-    const char *p = (const char *)dlsym(g_lib, name);
-    char safe[257];
-    size_t i;
+    size_t i = 0;
 
-    if (!p) return;
+    if (!p) { dst[0] = '\0'; return 0; }
 
     memset(&sa, 0, sizeof sa);
     sa.sa_handler = fault_handler;
@@ -256,18 +266,59 @@ static void print_str_sym(const char *name)
 
     g_faulted = 0;
     if (sigsetjmp(g_jmp, 1) == 0) {
-        for (i = 0; i < sizeof safe - 1; i++) {
+        for (i = 0; i < dstsz - 1; i++) {
             char ch = p[i];
             if (ch == '\0') break;
-            safe[i] = (ch >= 0x20 && ch < 0x7f) ? ch : '.';
+            if (ch < 0x20 || ch >= 0x7f) break;   /* stop at the first non-text */
+            dst[i] = ch;
         }
-        safe[i] = '\0';
-        if (i) printf("  %-16s %s\n", name, safe);
     } else {
-        printf("  %-16s <unreadable>\n", name);
+        i = 0;
     }
+    dst[i] = '\0';
 
     sigaction(SIGSEGV, &old_segv, NULL);
+    return i;
+}
+
+static void print_str_sym(const char *name)
+{
+    void *p = dlsym(g_lib, name);
+    char as_array[257], as_ptr[257];
+    size_t n_array, n_ptr;
+
+    if (!p) return;
+
+    n_array = printable_run((const char *)p, as_array, sizeof as_array);
+
+    /* And as a pointer to a string. Reading the pointer itself can fault too. */
+    n_ptr = 0;
+    as_ptr[0] = '\0';
+    {
+        struct sigaction sa, old_segv;
+        const char *deref = NULL;
+
+        memset(&sa, 0, sizeof sa);
+        sa.sa_handler = fault_handler;
+        sigemptyset(&sa.sa_mask);
+        sigaction(SIGSEGV, &sa, &old_segv);
+        g_faulted = 0;
+        if (sigsetjmp(g_jmp, 1) == 0)
+            deref = *(const char **)p;
+        sigaction(SIGSEGV, &old_segv, NULL);
+
+        if (deref)
+            n_ptr = printable_run(deref, as_ptr, sizeof as_ptr);
+    }
+
+    /* Prefer whichever produced more readable text; 3 chars is the floor for
+     * calling something a string rather than a coincidence. */
+    if (n_ptr >= 3 && n_ptr >= n_array)
+        printf("  %-16s %s\n", name, as_ptr);
+    else if (n_array >= 3)
+        printf("  %-16s %s\n", name, as_array);
+    else
+        printf("  %-16s <not readable as text>\n", name);
 }
 
 static int looks_like_ts(const unsigned char *p, size_t n, size_t *off_out)
@@ -331,21 +382,69 @@ int main(int argc, char **argv)
 {
     const char *libpath = LIB_DEFAULT;
     const char *outpath = NULL;
-    int channel = -1, seconds = 10, opt;
+    int channel = -1, seconds = 10;
     long max_mb = 64;
     void *f_init, *f_fin, *f_set, *f_rel, *f_read, *f_lock, *f_state, *f_rssi, *f_cn;
     long r;
 
-    while ((opt = getopt(argc, argv, "l:t:s:o:m:h")) != -1) {
-        switch (opt) {
-        case 'l': libpath = optarg;        break;
-        case 't': channel = atoi(optarg);  break;
-        case 's': seconds = atoi(optarg);  break;
-        case 'o': outpath = optarg;        break;
-        case 'm': max_mb = atol(optarg);   break;
-        default:  usage(argv[0]); return (opt == 'h') ? 0 : 2;
+    /*
+     * argv is parsed by hand rather than with getopt().
+     *
+     * getopt() reports its argument through `optarg`, a global in libc. In a
+     * non-PIE executable that global is imported by copy relocation: the
+     * loader reserves space in our .bss and copies libc's value into it. But
+     * libc's getopt() then writes to libc's own copy, not ours, so `optarg`
+     * here stays as it was at load time - NULL - and atoi(NULL) segfaults
+     * before the program prints anything.
+     *
+     * Same family as the setvbuf(stdout, ...) crash above: importing libc
+     * data symbols across this ABI boundary is not reliable. Functions are
+     * fine; variables are not. So the program touches neither.
+     */
+    {
+        int i;
+        for (i = 1; i < argc; i++) {
+            const char *a = argv[i];
+            const char *val;
+
+            if (a[0] != '-' || a[1] == '\0' || a[2] != '\0') {
+                if (strcmp(a, "-h") != 0) {
+                    printf("unrecognised argument: %s\n\n", a);
+                    usage(argv[0]);
+                    return 2;
+                }
+            }
+
+            if (a[1] == 'h') { usage(argv[0]); return 0; }
+
+            if (!strchr("ltsom", a[1])) {
+                printf("unknown option: %s\n\n", a);
+                usage(argv[0]);
+                return 2;
+            }
+
+            /* Everything else takes a value in the next argv slot. */
+            if (i + 1 >= argc) {
+                printf("-%c needs a value\n\n", a[1]);
+                usage(argv[0]);
+                return 2;
+            }
+            val = argv[++i];
+
+            switch (a[1]) {
+            case 'l': libpath = val;        break;
+            case 't': channel = atoi(val);  break;
+            case 's': seconds = atoi(val);  break;
+            case 'o': outpath = val;        break;
+            case 'm': max_mb  = atol(val);  break;
+            default:
+                printf("unknown option: %s\n\n", a);
+                usage(argv[0]);
+                return 2;
+            }
         }
     }
+
     if (seconds <= 0) seconds = 10;
 
     printf("oneseg-api-probe\n================\n\n");
