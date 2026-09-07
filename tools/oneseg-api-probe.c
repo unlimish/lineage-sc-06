@@ -47,10 +47,19 @@
  *   unzip -q android-ndk-r21e-linux-x86_64.zip
  *   export ANDROID_NDK="$HOME/android-ndk-r21e"
  *
- * Then, from the repository root. The -no-pie flags are NOT optional:
+ * Then, from the repository root. None of these flags are optional - or just
+ * run tools/build-android.sh, which sets them and checks the result:
  *
  *   "$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi16-clang" \
- *       -fno-pie -no-pie -O2 -o oneseg-api-probe tools/oneseg-api-probe.c -ldl
+ *       -fno-pie -no-pie -Wl,--hash-style=sysv \
+ *       -O2 -o oneseg-api-probe tools/oneseg-api-probe.c -ldl
+ *
+ * WHY --hash-style=sysv. Modern linkers emit only .gnu.hash, and the Android
+ * linker did not learn to read it until 6.0 (API 23). Given a binary with no
+ * DT_HASH, the 4.x linker computes hash % nbucket with nbucket still 0 - ARM
+ * integer division does not trap, so it returns 0 - and then dereferences an
+ * uninitialised bucket table. That is a SIGSEGV during load, again with no
+ * output at all.
  *
  * WHY NON-PIE. The dynamic linker only learned to load position-independent
  * executables in Android 4.1 (API 16). This device runs 4.0.4, which is API

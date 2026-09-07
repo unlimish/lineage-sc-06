@@ -96,7 +96,12 @@ else
     echo "using $CLANG"
     # -fno-pie/-no-pie are the whole point: the Android 4.0.x linker cannot
     # load a position-independent executable and faults before main().
-    if "$CLANG" -fno-pie -no-pie -O2 -Wall \
+    # --hash-style=sysv: the Android linker before 6.0 reads only DT_HASH.
+    # A binary carrying only .gnu.hash makes the 4.x linker walk a zero-sized
+    # bucket table, which is a SIGSEGV during load - before main(), with no
+    # output. Ask for the old table explicitly rather than trusting the
+    # toolchain default.
+    if "$CLANG" -fno-pie -no-pie -Wl,--hash-style=sysv -O2 -Wall \
             -o oneseg-api-probe tools/oneseg-api-probe.c -ldl; then
         ok "built -> ./oneseg-api-probe"
         built=$((built+1))
@@ -166,6 +171,47 @@ check_bin() {
 
 check_bin isdbt-dump static
 check_bin oneseg-api-probe dynamic
+
+# ---------------------------------------------------------------------------
+# The properties that decide whether Android 4.0.4's loader accepts a binary.
+# All of them fail the same way - a segfault before main() with no output - so
+# print them rather than making anyone guess which one it was.
+# ---------------------------------------------------------------------------
+
+READELF=""
+for r in arm-linux-gnueabihf-readelf arm-linux-gnueabi-readelf readelf; do
+    command -v "$r" >/dev/null 2>&1 && { READELF="$r"; break; }
+done
+
+if [ -n "$READELF" ] && [ -f oneseg-api-probe ]; then
+    echo
+    echo "=== oneseg-api-probe: what the 4.0.4 loader will see ==="
+
+    hash_tags="$("$READELF" -d oneseg-api-probe 2>/dev/null \
+                 | grep -oiE '\(GNU_HASH\)|\(HASH\)' | tr -d '()' | sort -u | tr '\n' ' ')"
+    case "$hash_tags" in
+        *"GNU_HASH"*)
+            case "$hash_tags" in
+                *" HASH "*|"HASH "*|*"HASH")
+                    ok "hash: both DT_HASH and DT_GNU_HASH" ;;
+                *)  bad "hash: DT_GNU_HASH only - the 4.x linker cannot read this"
+                    note "  rebuild with -Wl,--hash-style=sysv"
+                    failed=$((failed+1)) ;;
+            esac ;;
+        *"HASH"*) ok "hash: DT_HASH present" ;;
+        *)        note "hash: could not determine (readelf output unexpected)" ;;
+    esac
+
+    interp="$("$READELF" -l oneseg-api-probe 2>/dev/null \
+              | grep -o '/system/bin/linker[^]]*' | head -1)"
+    [ -n "$interp" ] && ok "interpreter: $interp" \
+                     || note "interpreter: not /system/bin/linker - check by hand"
+
+    echo "  DT_NEEDED:"
+    "$READELF" -d oneseg-api-probe 2>/dev/null \
+        | grep NEEDED | sed 's/.*\[\(.*\)\]/    \1/'
+    note "  Anything beyond libc/libdl/libm has to exist on Android 4.0.4."
+fi
 
 # ---------------------------------------------------------------------------
 
