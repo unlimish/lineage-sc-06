@@ -18,7 +18,8 @@ SC-06D（Samsung GALAXY S III / docomo / コードネーム **`d2dcm`**）に Li
 | LineageOS を入れる | **できる** | `d2` 系のカーネル／デバイスツリーが lineage-16.0 まで生きている |
 | Android のバージョンを上げる | **Android 9 まで**（純正 4.1.2 から大幅前進） | MSM8960 向けは lineage-16.0 が事実上の上限 |
 | ワンセグのカーネルドライバ | **すでに用意されている** | `drivers/media/nmi326/` が lineage-16.0 のカーネルに残っており、`lineageos_d2dcm_defconfig` で `CONFIG_ISDBT_NMI=y` |
-| ワンセグが実際に映る | **あと一歩。自作コードでチューナをロック済み** | `dlopen` → `Initailze` → `SetChannel(27)` → `CheckChannelLock` = 1 まで到達。残るは TS の取り出し → [`docs/07`](docs/07-実機調査の結果.md) 第2g節 |
+| ワンセグの TS を取り出す | **成功**（純正 4.0.4 上・自作コードのみ） | `ffprobe` が H.264 320×180 + AAC-LC / 422kb/s を認識 → [`docs/07`](docs/07-実機調査の結果.md) 第1節 |
+| ワンセグが Android 9 で映る | **未検証**。残るは 3 つの .so が Pie でロードできるか | チューナ制御は解決済み → [`docs/08`](docs/08-アプリ設計.md) 第6節 |
 
 つまり、
 

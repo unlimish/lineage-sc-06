@@ -202,15 +202,15 @@ static void *sym(const char *name, int quiet)
  * Call an unknown function under a fault handler.
  * Returns 0 on a clean call (result in *out), -1 if it faulted.
  */
-static int safe_call(void *fp, const char *name,
-                     long a, long b, long c, long d, long *out)
+static int safe_call_q(void *fp, const char *name,
+                       long a, long b, long c, long d, long *out, int loud)
 {
     struct sigaction sa, old_segv, old_bus, old_ill;
     volatile long r = 0;
     int rc = 0;
 
     if (!fp) {
-        printf("  %-28s -> not resolved, skipped\n", name);
+        if (loud) printf("  %-28s -> not resolved, skipped\n", name);
         return -1;
     }
 
@@ -227,8 +227,9 @@ static int safe_call(void *fp, const char *name,
         /* These APIs return int, and errors are conventionally negative, so
          * show the low 32 bits signed as well as raw - a bare unsigned 0x...
          * hides the difference between "-5" and a huge success value. */
-        printf("  %-28s -> %d  (raw 0x%lx)\n",
-               name, (int)(r & 0xffffffffL), (unsigned long)r);
+        if (loud)
+            printf("  %-28s -> %d  (raw 0x%lx)\n",
+                   name, (int)(r & 0xffffffffL), (unsigned long)r);
         if (out) *out = r;
     } else {
         printf("  %-28s -> CRASHED (signal %d)\n", name, (int)g_faulted);
@@ -239,6 +240,12 @@ static int safe_call(void *fp, const char *name,
     sigaction(SIGBUS,  &old_bus,  NULL);
     sigaction(SIGILL,  &old_ill,  NULL);
     return rc;
+}
+
+static int safe_call(void *fp, const char *name,
+                     long a, long b, long c, long d, long *out)
+{
+    return safe_call_q(fp, name, a, b, c, d, out, 1);
 }
 
 /*
@@ -574,11 +581,20 @@ int main(int argc, char **argv)
      * back afterwards rather than trusted from the return code.
      */
     {
-        long v1 = 0, v2 = 0;
-        if (safe_call(f_rssi, "OneSegDrv_GetRSSI(&v)", (long)&v1, 0, 0, 0, &r) == 0)
-            printf("      RSSI out-param = %ld\n", v1);
-        if (safe_call(f_cn, "OneSegDrv_GetCN(&v)", (long)&v2, 0, 0, 0, &r) == 0)
-            printf("      C/N  out-param = %ld\n", v2);
+        /* The exact out-param type is unknown, so give each call a small
+         * zeroed buffer and print what it wrote. An int at offset 0 is the
+         * obvious shape, but a struct of several fields is just as likely. */
+        int box[8];
+        const char *names[2] = { "OneSegDrv_GetRSSI(&buf)", "OneSegDrv_GetCN(&buf)" };
+        void *fns[2]; int k;
+
+        fns[0] = f_rssi; fns[1] = f_cn;
+        for (k = 0; k < 2; k++) {
+            memset(box, 0, sizeof box);
+            if (safe_call(fns[k], names[k], (long)box, 0, 0, 0, &r) == 0)
+                printf("      wrote: %d %d %d %d\n",
+                       box[0], box[1], box[2], box[3]);
+        }
     }
 
     /*
@@ -636,6 +652,7 @@ int main(int argc, char **argv)
         }
 
         int ready = 0, raw_tried = 0;
+        long last_r = -1;
 
         while (time(NULL) < deadline) {
             if (g_tsfd > 0) {
@@ -648,8 +665,19 @@ int main(int argc, char **argv)
             }
 
             memset(buf, 0, TSBUF);
-            if (safe_call(f_read, "OneSegDrv_ReadData", (long)buf, TSBUF, 0, 0, &r) < 0)
-                break;
+            /* Only narrate the first few calls and any change in the returned
+             * size. A steady stream printing one line per read buries the one
+             * thing worth seeing. */
+            {
+                int loud = (calls < 3 || r != last_r);
+                if (safe_call_q(f_read, "OneSegDrv_ReadData",
+                                (long)buf, TSBUF, 0, 0, &r, loud) < 0)
+                    break;
+                if (!loud && (calls % 50) == 0)
+                    printf("  ... %d reads, %llu bytes so far\n",
+                           calls, total);
+                last_r = r;
+            }
             calls++;
 
             if (r <= 0) {
