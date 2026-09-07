@@ -1,0 +1,25 @@
+# Device survey output from tools/oneseg-probe.sh.
+# This is a copy of someone's /system plus their partition map - it does not
+# belong in a public repository, and parts of it are not redistributable.
+oneseg-report/
+*.img
+efs.img
+system.img
+
+# Proprietary blobs extracted from a stock ROM. Never commit these.
+vendor/
+proprietary/
+*.apk
+*.so
+*.jar
+
+# Build output
+out/
+*.zip
+
+# Editors and OS
+*.swp
+*~
+.DS_Store
+__pycache__/
+*.pyc

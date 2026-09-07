@@ -1,0 +1,28 @@
+#
+# system.prop for the docomo GALAXY S III (SC-06D)
+#
+# Values carried over from the CM13-era d2dcm tree, which is the last place
+# docomo RIL was known to work on this device.
+#
+
+# RIL -----------------------------------------------------------------------
+# Samsung's RIL daemon talks to the modem over the shared-memory device.
+rild.libargs=-d /dev/smd0
+
+# SC-06D is an LTE (Xi) device on a GSM/UMTS base.
+telephony.lteOnGsmDevice=1
+
+# 9 = LTE/GSM/WCDMA (NETWORK_MODE_LTE_GSM_WCDMA)
+ro.telephony.default_network=9
+
+# Enables docomo-specific paths inside libsec-ril.so.
+ro.ril.enable.dcm.feature=1
+
+# docomo emoji ---------------------------------------------------------------
+ro.config.libemoji=libemoji_docomo.so
+
+# ISDB-T / 1seg --------------------------------------------------------------
+# Informational only: nothing in AOSP reads this. It is here so that a shell on
+# the device can tell at a glance whether it is running the 1seg-capable
+# variant, and so scripts in tools/ have something to key off.
+ro.hw.oneseg=nmi326

@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  local_manifest for building LineageOS 16.0 (Android 9) for the docomo
+  GALAXY S III (SC-06D / d2dcm).
+
+  Install as:
+      <LINEAGE_ROOT>/.repo/local_manifests/d2dcm.xml
+
+  Then:
+      repo sync -c -j4 (add the usual no-clone-bundle / no-tags flags)
+
+  Note on versions: lineage-16.0 is the end of the line for MSM8960. The
+  official LineageOS d2 repositories stop earlier still (kernel at
+  lineage-15.0, device at cm-12.0), so everything below comes from the
+  community fork that carried the family to Pie. Its last commit is from
+  December 2020 - nothing newer exists, and there is no lineage-17.1+ for
+  this SoC. See docs/01-結論と実現可能性.md.
+-->
+<manifest>
+
+  <remote name="s3msm8960"
+          fetch="https://github.com/Samsung-Galaxy-S3-MSM8960"
+          revision="lineage-16.0" />
+
+  <!--
+    The unified d2 tree. It already folds in d2-common and msm8960-common,
+    so d2dcm inherits from this one tree rather than from a stack of them.
+    Checked out as device/samsung/d2att because its own BoardConfig.mk
+    hardcodes that LOCAL_PATH; d2dcm sits alongside it and overrides.
+  -->
+  <project name="android_device_samsung_d2att-unified"
+           path="device/samsung/d2att"
+           remote="s3msm8960"
+           revision="lineage-16.0" />
+
+  <project name="android_device_samsung_qcom-common"
+           path="device/samsung/qcom-common"
+           remote="s3msm8960"
+           revision="lineage-16.0" />
+
+  <!--
+    The kernel. This is the repository that matters most for this project:
+    it still carries drivers/media/nmi326 (the ISDB-T tuner driver) and
+    arch/arm/configs/lineageos_d2dcm_defconfig, in which CONFIG_ISDBT_NMI=y.
+    Do not substitute a different d2 kernel - the others drop SC-06D's board
+    file (arch/arm/mach-msm/board-m2_dcm.c) and with it 1seg support.
+  -->
+  <project name="android_kernel_samsung_d2"
+           path="kernel/samsung/d2"
+           remote="s3msm8960"
+           revision="lineage-16.0" />
+
+  <project name="android_hardware_samsung"
+           path="hardware/samsung"
+           remote="s3msm8960"
+           revision="lineage-16.0" />
+
+  <!--
+    STLport. Jelly Bean-era Samsung blobs link against it and AOSP dropped
+    it long ago. Needed for the d2 blobs generally, and likely needed again
+    for the 1seg libraries.
+
+    Pinned to lineage-15.1 deliberately: this repository has no lineage-16.0
+    branch (verified against the remote). The library is self-contained and
+    the 15.1 revision builds against Pie, but if it ever stops doing so,
+    that is the first place to look rather than a mis-set revision here.
+  -->
+  <project name="android_external_stlport"
+           path="external/stlport"
+           remote="s3msm8960"
+           revision="lineage-15.1" />
+
+  <!--
+    TWRP device tree for d2att, useful for building a recovery that can
+    back up the stock ROM before you overwrite it.
+  -->
+  <project name="twrp-device_samsung_d2att"
+           path="device/samsung/d2att-twrp"
+           remote="s3msm8960"
+           revision="main" />
+
+  <!--
+    device/samsung/d2dcm is NOT listed here.
+
+    It lives inside this project repository (lineage-sc-06) under
+    device/samsung/d2dcm, and repo cannot map a subdirectory of one
+    repository onto a path in another. Link it in after syncing:
+
+        ./tools/link-device-tree.sh <LINEAGE_ROOT>
+
+    which creates the symlink <LINEAGE_ROOT>/device/samsung/d2dcm.
+  -->
+
+  <!--
+    Vendor blobs are not listed either, on purpose. Extract them from your
+    own SC-06D:
+
+        cd <LINEAGE_ROOT>/device/samsung/d2att  && ./extract-files.sh
+        cd <LINEAGE_ROOT>/device/samsung/d2dcm  && ./extract-files.sh
+  -->
+
+</manifest>

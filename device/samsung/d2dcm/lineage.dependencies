@@ -1,0 +1,20 @@
+[
+  {
+    "repository": "android_device_samsung_d2att-unified",
+    "target_path": "device/samsung/d2att",
+    "branch": "lineage-16.0",
+    "remote": "s3msm8960"
+  },
+  {
+    "repository": "android_device_samsung_qcom-common",
+    "target_path": "device/samsung/qcom-common",
+    "branch": "lineage-16.0",
+    "remote": "s3msm8960"
+  },
+  {
+    "repository": "android_kernel_samsung_d2",
+    "target_path": "kernel/samsung/d2",
+    "branch": "lineage-16.0",
+    "remote": "s3msm8960"
+  }
+]

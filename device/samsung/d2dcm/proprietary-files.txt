@@ -1,0 +1,75 @@
+# Proprietary blobs specific to the docomo GALAXY S III (SC-06D).
+#
+# Shared d2 / msm8960 blobs are NOT listed here - they come from the
+# d2att-unified tree's own proprietary-files.txt. Only docomo-specific
+# files belong in this file.
+#
+# Extract with:
+#   ./extract-files.sh              (from a rooted device over adb)
+#   ./extract-files.sh /path/to/rom (from an extracted stock ROM)
+#
+# Blobs are never committed to this repository.
+
+# RIL - docomo (Xi/FOMA) ------------------------------------------------------
+lib/libril.so
+lib/libsec-ril.so
+
+# Fonts and emoji -------------------------------------------------------------
+fonts/truetypeEmoji.ttf
+lib/libemoji_docomo.so
+
+# FeliCa / おサイフケータイ -----------------------------------------------------
+# NOTE: FeliCa is not expected to work on a custom ROM. These are listed for
+# completeness only. Move your balance off the device before flashing.
+app/FeliCaLock.apk
+app/FeliCaRemoteLock.apk
+app/FeliCaTest.apk
+app/MobileFeliCaClient.apk
+app/MobileFeliCaMenuApp.apk
+app/MobileFeliCaSettingApp.apk
+app/MobileFeliCaWebPluginBoot.apk
+app/FdtpApplication.apk
+app/FdtpMfcAccess.apk
+bin/mfdp
+bin/mfsc
+etc/felica/No_ticket.png
+etc/felica/air.png
+etc/felica/bookmark.cfg
+etc/felica/common.cfg
+etc/felica/id.png
+etc/felica/mfc_falp.cfg
+etc/felica/mfc_push.cfg
+etc/felica/mfm.cfg
+etc/felica/mfs.cfg
+etc/felica/money.png
+etc/felica/portal_icon.png
+etc/felica/toku.png
+etc/felica/train.png
+
+# docomo extras ---------------------------------------------------------------
+app/WAPPushManager.apk
+app/SPModePushNotifier.apk
+
+# =============================================================================
+# ISDB-T / 1seg (ワンセグ)  --  NOT YET FILLED IN
+# =============================================================================
+#
+# This section is empty on purpose. The exact file names are unknown: no
+# published d2dcm tree has ever carried the 1seg stack, and this repository
+# has not been run against real SC-06D hardware.
+#
+# To fill it in, run tools/oneseg-probe.sh against a rooted, stock 4.1.2
+# SC-06D. It writes oneseg-report/proprietary-files.oneseg.txt, whose contents
+# go directly below this comment.
+#
+# Expect roughly:
+#   lib/lib<something>.so          tuner / demod control
+#   lib/lib<something>.so          TS demux, EPG, captions, RMP
+#   etc/firmware/<something>       NMI326 firmware image
+#   app/<something>.apk            the 1seg application
+#   framework/<something>.jar      framework glue
+#   etc/permissions/<something>.xml
+#
+# The RMP key is the open question. If it lives in a file, it must be captured
+# here as well; if it lives in the NMI326 chip's OTP, nothing needs listing.
+# See docs/02-ワンセグの構造と壁.md section 4.

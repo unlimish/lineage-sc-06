@@ -1,0 +1,7 @@
+# ISDB-T (1seg) tuner character device on SC-06D.
+#
+# drivers/media/nmi326 exposes /dev/isdbt (char major 225). Without its own
+# type it would be labelled device:s0 like any unlabelled node, and every
+# domain that opened it would need access to that catch-all type - which is
+# exactly the sort of over-broad rule that gets a policy rejected.
+type isdbt_device, dev_type;

@@ -1,0 +1,33 @@
+# ISDB-T (1seg) tuner node for the docomo GALAXY S III (SC-06D).
+#
+# drivers/media/nmi326 registers a character device (major 225, minor 0) and
+# then calls class_create()/device_create(), so ueventd creates /dev/isdbt on
+# its own. What ueventd does NOT know is who should own it: without a rule it
+# lands as root:root 0600 and nothing in the framework can open it.
+#
+# The clean fix is a ueventd rule. d2att-unified installs ueventd.qcom.rc to
+# the root of the ramdisk, so the line
+#
+#     /dev/isdbt   0660   media   media
+#
+# belongs in a d2dcm fork of that file. This .rc is the low-risk alternative:
+# it does the same thing from init, works no matter which ueventd file is
+# actually installed, and is easy to drop once the ueventd route is in place.
+#
+# Imported from init.qcom.rc? No - nothing imports this file yet.
+# TODO(hardware): add `import /init.oneseg.rc` to the d2dcm ramdisk, or fold
+# these commands into the ueventd rule above. Until then this file is
+# installed but inert, which is deliberate: an unreferenced .rc cannot break
+# a boot, and boot comes first.
+
+on post-fs
+    # The driver is built in (CONFIG_ISDBT_NMI=y), so it has probed long
+    # before post-fs and /dev/isdbt already exists. chown/chmod on a missing
+    # path is logged and ignored, so this is safe on a unit without a tuner.
+    chown media media /dev/isdbt
+    chmod 0660 /dev/isdbt
+
+    # Group ownership choice: `media` is what the framework's media stack runs
+    # as, and a 1seg app streams TS into the media pipeline. If the stock
+    # stack turns out to run its own uid, change both lines to match it - the
+    # value has to agree with whatever sepolicy/isdbt.te allows.

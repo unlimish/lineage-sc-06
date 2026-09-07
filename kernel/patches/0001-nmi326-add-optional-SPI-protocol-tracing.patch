@@ -1,0 +1,104 @@
+From: lineage-sc-06
+Subject: [PATCH] nmi326: add optional SPI protocol tracing
+
+The NMI326 register map and tuning sequence are not documented anywhere
+public. drivers/media/nmi326 is a pass-through: it powers the chip, manages
+the interrupt, and moves raw bytes. Every decision about what those bytes
+mean is made by a closed userspace library.
+
+That makes the SPI boundary the only observable point in the stack, and this
+file is the only GPL code that sits on it. Dumping the traffic here turns an
+opaque blob into a recorded command sequence, which is what a reimplementation
+needs.
+
+Off by default (the traffic swamps dmesg once a stream is running):
+
+    # at boot
+    nmi326_spi_drv.trace=1
+
+    # at runtime
+    echo 1 > /sys/module/nmi326_spi_drv/parameters/trace
+    echo 256 > /sys/module/nmi326_spi_drv/parameters/trace_max
+
+Reads are dumped after a successful transfer (the buffer holds the reply);
+writes are dumped before, so a transfer that fails is still recorded.
+
+Verified to apply cleanly to:
+  - Samsung-Galaxy-S3-MSM8960/android_kernel_samsung_d2  lineage-16.0
+  - kbc-developers/android_kernel_samsung_d2dcm          cm-13.0
+nmi326_spi_drv.c is byte-identical in both, so it should also apply to
+Samsung's own SC-06D kernel release.
+
+See docs/05-ワンセグ移植の手順.md step 6, route 2.
+---
+diff --git a/drivers/media/nmi326/nmi326_spi_drv.c b/drivers/media/nmi326/nmi326_spi_drv.c
+index 87b51fe..a17d145 100644
+--- a/drivers/media/nmi326/nmi326_spi_drv.c
++++ b/drivers/media/nmi326/nmi326_spi_drv.c
+@@ -40,6 +40,47 @@
+ 
+ static struct spi_device *nmi326_spi;
+ 
++/*
++ * SPI protocol tracing.
++ *
++ * The NMI326 register map and tuning sequence are not public: this driver is
++ * a pass-through, and every decision about the chip is made by a closed
++ * userspace library. Dumping the bytes that cross this boundary is therefore
++ * the only way to learn the protocol, and it is a legitimate way to do it -
++ * this file is GPLv2 and the traffic is our own device's.
++ *
++ * Off by default; the traffic is heavy enough to swamp dmesg once a stream
++ * is running. Enable at boot with nmi326_spi_drv.trace=1, or at runtime with
++ *
++ *     echo 1 > /sys/module/nmi326_spi_drv/parameters/trace
++ *
++ * Each transfer is capped at trace_max bytes so that TS payload reads do not
++ * push the interesting control traffic out of the ring buffer.
++ */
++static int nmi326_trace;
++module_param_named(trace, nmi326_trace, int, 0644);
++MODULE_PARM_DESC(trace, "dump SPI traffic to dmesg (0=off, 1=on)");
++
++static int nmi326_trace_max = 64;
++module_param_named(trace_max, nmi326_trace_max, int, 0644);
++MODULE_PARM_DESC(trace_max, "max bytes dumped per transfer");
++
++static void nmi326_trace_dump(const char *tag, const u8 *buf, size_t len)
++{
++	size_t n;
++
++	if (!nmi326_trace || !buf || !len)
++		return;
++
++	n = (nmi326_trace_max > 0 && len > (size_t)nmi326_trace_max)
++		? (size_t)nmi326_trace_max : len;
++
++	printk(KERN_DEBUG ">ISDBT-%s< len=%zu%s\n",
++	       tag, len, (n < len) ? " (truncated)" : "");
++	print_hex_dump(KERN_DEBUG, ">ISDBT< ", DUMP_PREFIX_OFFSET,
++		       16, 1, buf, n, false);
++}
++
+ int nmi326_spi_read(u8 *buf, size_t len)
+ {
+ 	struct spi_message msg;
+@@ -64,6 +105,9 @@ int nmi326_spi_read(u8 *buf, size_t len)
+ 
+ 	r_len = (status ? status : len);
+ 
++	if (!status)
++		nmi326_trace_dump("RX", buf, len);
++
+ 	return r_len;
+ }
+ 
+@@ -87,6 +131,8 @@ int nmi326_spi_write(u8 *buf, size_t len)
+ 	transfer[0].bits_per_word = 8;
+ 	transfer[0].delay_usecs = 0;
+ 
++	nmi326_trace_dump("TX", buf, len);
++
+ 	spi_message_add_tail(&(transfer[0]), &msg);
+ 	status = spi_sync(nmi326_spi, &msg);
+ 

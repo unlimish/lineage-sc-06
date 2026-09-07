@@ -1,0 +1,2 @@
+# ISDB-T (1seg) tuner
+/dev/isdbt      u:object_r:isdbt_device:s0

@@ -1,0 +1,40 @@
+# Access rules for the ISDB-T (1seg) tuner on SC-06D.
+#
+# STATUS: not compiled into the build yet.
+#
+# d2att-unified boots with androidboot.selinux=permissive and leaves
+# BOARD_SEPOLICY_DIRS unset, so this policy is inert until both of those are
+# changed (see BoardConfig.mk). That ordering is intentional: bring 1seg up
+# under permissive first, find out which domain actually opens /dev/isdbt,
+# then write the real rules and switch to enforcing. Guessing the domain now
+# and shipping it enforcing would only produce denials that look like
+# hardware failures.
+#
+# How to find the right domain once something is talking to the tuner:
+#
+#   adb shell su -c 'dmesg | grep -i "avc:"'
+#   adb logcat -b events | grep avc
+#
+# The scontext= field in the denial names the domain to put in place of the
+# placeholders below.
+
+# ---------------------------------------------------------------------------
+# Placeholder: the stock stack most likely drives the tuner from a native
+# media component. Keep these commented until a denial proves which one.
+# ---------------------------------------------------------------------------
+
+# allow mediaserver isdbt_device:chr_file rw_file_perms;
+# allow platform_app isdbt_device:chr_file rw_file_perms;
+
+# ---------------------------------------------------------------------------
+# If the port ends up using a purpose-built app or daemon instead of the
+# stock one, give it its own domain rather than widening an existing one:
+#
+#   type oneseg, domain;
+#   type oneseg_exec, exec_type, file_type;
+#   init_daemon_domain(oneseg)
+#   allow oneseg isdbt_device:chr_file rw_file_perms;
+#
+# The driver also delivers data by SIGIO/fasync and poll(), which the
+# chr_file rw_file_perms set already covers.
+# ---------------------------------------------------------------------------
