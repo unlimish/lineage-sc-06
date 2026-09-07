@@ -2,9 +2,10 @@
 #
 # oneseg-probe.sh - work out what the SC-06D 1seg stack is actually made of.
 #
-# Run this against a ROOTED, STOCK (Android 4.1.2) SC-06D, BEFORE flashing
-# anything. Once LineageOS is on the device the stock stack is gone and this
-# information cannot be recovered.
+# Run this against a ROOTED, STOCK SC-06D, BEFORE flashing anything. Either
+# stock release works: SC-06D shipped on Android 4.0.4 with 1seg already in
+# place and was later updated to 4.1.2. Once LineageOS is on the device the
+# stock stack is gone and this information cannot be recovered.
 #
 # The whole 1seg port hinges on one question that no public source answers:
 # which files sit between /dev/isdbt and the user? This script answers it by
@@ -33,7 +34,7 @@ warn() { printf '%s\n' "${c_yel}WARN${c_off} $*" | tee -a "$LOG"; }
 die()  { printf '%s\n' "${c_red}ERR${c_off}  $*" | tee -a "$LOG" >&2; exit 1; }
 hdr()  { printf '\n%s\n%s\n' "=== $* ===" "" | tee -a "$LOG"; }
 
-# Run a command as root on the device. Stock 4.1.2 root managers differ in how
+# Run a command as root on the device. Root managers of that era differ in how
 # they accept a command, so try the common spellings and keep whichever works.
 SU_STYLE=""
 dsu() {
@@ -94,9 +95,14 @@ case "$model$device" in
 esac
 
 case "$rel" in
-    4.*) ok "stock-era Android ($rel) - good, the 1seg stack should be intact" ;;
-    "")  warn "could not read the Android version" ;;
-    *)   warn "Android $rel is not the stock 4.1.2. If this is already a custom ROM, the 1seg stack is likely gone." ;;
+    # SC-06D shipped on 4.0.4 with 1seg and was updated to 4.1.2; either stock
+    # release carries the full stack, so both are fine as an extraction source.
+    4.0*) ok "stock Android $rel - 1seg shipped with this release, stack should be intact" ;;
+    4.1*) ok "stock Android $rel (final docomo firmware) - stack should be intact" ;;
+    4.*)  ok "stock-era Android ($rel) - the 1seg stack should be intact" ;;
+    "")   warn "could not read the Android version" ;;
+    *)    warn "Android $rel is not a stock SC-06D release (4.0.4 or 4.1.2)."
+          warn "If this is already a custom ROM, the 1seg stack is likely gone." ;;
 esac
 
 if detect_su; then
@@ -104,8 +110,8 @@ if detect_su; then
     HAVE_ROOT=1
 else
     warn "no root. Much of /system is still readable, but /efs, /dev and the"
-    warn "partition table will be missing - and those are where the RMP key"
-    warn "question gets decided. Rooting first is strongly recommended."
+    warn "partition table will be missing, and those decide the partition"
+    warn "sizes and the tuner node's ownership. Rooting first is recommended."
     HAVE_ROOT=0
 fi
 
@@ -145,7 +151,7 @@ dsu 'cat /sys/class/isdbt/isdbt/dev' | tr -d '\r' > "$REPORT_DIR/sys-class-isdbt
 dsu 'ls -l /sys/bus/spi/devices/' | tr -d '\r' > "$REPORT_DIR/spi-devices.txt" 2>/dev/null
 
 # ---------------------------------------------------------------------------
-# 2. partitions - needed for BoardConfig.mk sizes and for the RMP question
+# 2. partitions - needed for BoardConfig.mk sizes and for the EFS backup
 # ---------------------------------------------------------------------------
 
 hdr "2. partitions"
@@ -245,19 +251,24 @@ if [ -s "$REPORT_DIR/hits-strings.txt" ]; then
     cat "$REPORT_DIR/hits-strings.txt" >> "$CAND"
 fi
 
-# RMP / CAS markers. Which of these hits (if any) tells us where the content
-# protection key lives, which is the single biggest unknown in the port.
-say "searching for RMP / CAS markers ..."
+# Content-protection markers.
+#
+# NOTE: 1seg broadcasts are NOT scrambled - viewing needs no B-CAS card and no
+# RMP key (RMP is a full-seg mechanism, and SC-06D has no full-seg). So these
+# hits are not on the critical path. They are still worth collecting: DRM code
+# marks the library that handles *recording*, which helps separate the layers
+# and tells you which library you can safely leave behind.
+say "searching for content-protection markers (informational) ..."
 for pat in 'RMP' 'rmp_' 'MULTI2' 'multi2' 'B-CAS' 'bcas' 'BCAS' 'CAS_' 'descramble' 'Descramble' 'ecm' 'ECM' 'emm' 'EMM'; do
     grep -rlI --binary-files=text -e "$pat" "$PULL_DIR/lib" 2>/dev/null >> "$REPORT_DIR/hits-rmp.txt"
 done
 sort -u "$REPORT_DIR/hits-rmp.txt" -o "$REPORT_DIR/hits-rmp.txt" 2>/dev/null
 if [ -s "$REPORT_DIR/hits-rmp.txt" ]; then
-    ok "possible RMP/CAS code -> hits-rmp.txt"
+    ok "content-protection code -> hits-rmp.txt"
     sed 's/^/    /' "$REPORT_DIR/hits-rmp.txt" | tee -a "$LOG"
-    say "  ^ these are the libraries that decide whether 1seg can ever decode."
+    say "  ^ recording DRM, most likely. Not needed to receive and watch."
 else
-    say "no obvious RMP/CAS strings (they may be obfuscated, or the key may be in the chip)"
+    say "no content-protection strings found (fine - viewing does not need any)"
 fi
 
 sort -u "$CAND" -o "$CAND"
@@ -301,7 +312,7 @@ if [ -d "$PULL_DIR/etc/firmware" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 7. EFS - one of the places the RMP key could live
+# 7. EFS - IMEI and radio calibration, and possibly tuner calibration
 # ---------------------------------------------------------------------------
 
 hdr "7. /efs"
@@ -311,8 +322,8 @@ if [ "$HAVE_ROOT" = "1" ]; then
     if [ -s "$REPORT_DIR/efs-listing.txt" ]; then
         ok "/efs listed -> efs-listing.txt ($(wc -l < "$REPORT_DIR/efs-listing.txt") lines)"
         say ""
-        say "  ${c_yel}Back up /efs before you flash anything.${c_off} It holds the IMEI, and on"
-        say "  Samsung devices it is also a plausible home for the RMP key:"
+        say "  ${c_yel}Back up /efs before you flash anything.${c_off} It holds the IMEI and the"
+        say "  radio calibration, and may also hold tuner calibration data:"
         say ""
         say "    adb shell su -c 'dd if=/dev/block/platform/msm_sdcc.1/by-name/efs of=/sdcard/efs.img'"
         say "    adb pull /sdcard/efs.img"

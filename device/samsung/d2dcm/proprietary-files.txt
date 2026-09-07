@@ -64,12 +64,14 @@ app/SPModePushNotifier.apk
 #
 # Expect roughly:
 #   lib/lib<something>.so          tuner / demod control
-#   lib/lib<something>.so          TS demux, EPG, captions, RMP
+#   lib/lib<something>.so          TS demux, EPG, captions
 #   etc/firmware/<something>       NMI326 firmware image
 #   app/<something>.apk            the 1seg application
 #   framework/<something>.jar      framework glue
 #   etc/permissions/<something>.xml
 #
-# The RMP key is the open question. If it lives in a file, it must be captured
-# here as well; if it lives in the NMI326 chip's OTP, nothing needs listing.
+# There is no DRM to carry across: 1seg is broadcast unscrambled, so viewing
+# needs no B-CAS card and no RMP key (RMP is a full-seg mechanism and SC-06D
+# has no full-seg). Content-protection libraries here would be about
+# protecting *recordings*, which reception does not depend on.
 # See docs/02-ワンセグの構造と壁.md section 4.

@@ -56,8 +56,9 @@ PRODUCT_PACKAGES += \
 #
 #   - the closed-source tuner/demod .so files
 #   - the NMI326 firmware blob
-#   - the 1seg application and its framework glue
-#   - whatever holds the RMP key
+#   - the 1seg application and its framework glue, if the stock app is used
+#
+# No decryption keys are needed: 1seg is broadcast unscrambled.
 #
 # Add them to proprietary-files.txt rather than listing them here, so that
 # extract-files.sh can pull them off a real device.
