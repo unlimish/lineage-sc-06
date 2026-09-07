@@ -69,8 +69,13 @@ summarise() {
     # 2. Did any data actually move?
     echo "${c_cyn}data flow${c_off}"
     local polls zero
-    polls=$(grep -c 'After Polling' "$f" 2>/dev/null || echo 0)
-    zero=$(grep 'After Polling' "$f" 2>/dev/null | grep -c 'retval=\[0\]' || echo 0)
+    # grep -c prints its count AND exits 1 when the count is zero, so the
+    # obvious "|| echo 0" appends a second zero and the variable becomes two
+    # lines. Let the count stand and swallow the exit status instead.
+    polls=$(grep -c 'After Polling' "$f" 2>/dev/null) || true
+    zero=$(grep 'After Polling' "$f" 2>/dev/null | grep -c 'retval=\[0\]') || true
+    polls=${polls:-0}
+    zero=${zero:-0}
     if [ "$polls" -gt 0 ]; then
         echo "  poll() calls seen : $polls"
         echo "  returned nothing  : $zero"

@@ -86,6 +86,8 @@ SC-06D はフルセグ非対応なので、**そもそも関係ありません**
   **録画を「TS をそのまま書く」方式にすると決めた**ので、CPRM ごと移植対象外
   → 純正から持ち込むのは**上記 3 ファイルで全部**（[`docs/08`](docs/08-アプリ設計.md)）
 - データ放送（DSM-CC/BML）と NexPlayer は**移植不要**
+- **受信できることを実機で確認**。純正スタックで 591/591 の poll が TS を返した。
+  周波数の式も実測で確定（ch27 = 557143 kHz）→ [`docs/07`](docs/07-実機調査の結果.md) 第2d節
 - **チューナ API が判明**: `libonesegdmxdriver.so` は 141 シンボルを C リンケージで
   公開しており、`OneSegDrv_Initailze` / `SetChannel` / `ReadData` / `CheckChannelLock`
   がそのまま `dlsym` で呼べます。**純正 ROM のまま、焼く前に検証できます**

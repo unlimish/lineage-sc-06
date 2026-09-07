@@ -74,6 +74,20 @@
  *   ELF 32-bit LSB executable, ARM, EABI5 ...      <- correct
  *   ELF 32-bit LSB shared object, ARM, EABI5 ...   <- PIE, will not run
  *
+ * CLOSE THE STOCK TV APP FIRST
+ *
+ * There is one tuner. If the stock stack is still running it holds the chip,
+ * and this program will be fighting it for the SPI bus - which does not fail
+ * cleanly, it just produces nonsense. Backing out of the app is not enough;
+ * its service and the native middleware keep running:
+ *
+ *   adb shell 'pm list packages | grep -i -E "mobiletv|oneseg"'
+ *   adb shell su -c 'am force-stop THE_PACKAGE'
+ *   adb shell 'ps | grep -iE "oneseg|mobiletv|mtv"'    # expect nothing
+ *
+ * The opposite is true for tools/oneseg-logcat.sh, where the stock app
+ * running IS the experiment.
+ *
  * RUN
  *
  *   adb push oneseg-api-probe /data/local/tmp/
@@ -404,9 +418,18 @@ int main(int argc, char **argv)
     /*
      * SetChannel almost certainly takes the physical channel number, but it
      * could want a frequency in kHz. Japanese UHF physical channel N has its
-     * centre at 473143 + (N-13)*6000 kHz. Try the channel number first, and
-     * only fall back if that is rejected - a tuner told to go to 27 kHz will
-     * simply fail to lock rather than do anything harmful.
+     * centre at 473143 + (N-13)*6000 kHz.
+     *
+     * That formula is not a guess any more. With the stock app tuned, the
+     * library logged:
+     *
+     *   D/isdbt: [ntv] master, get_sq_isr/DTV signal status [master],
+     *            frequency (557143000), sqindicator (32)
+     *
+     * 557143 kHz is exactly 473143 + (27-13)*6000, i.e. physical channel 27.
+     *
+     * Try the channel number first and fall back to kHz - a tuner told to go
+     * to 27 kHz simply fails to lock rather than doing anything harmful.
      */
     if (safe_call(f_set, "OneSegDrv_SetChannel(ch)", channel, 0, 0, 0, &r) == 0 && r != 0) {
         long khz = 473143L + (long)(channel - 13) * 6000L;
