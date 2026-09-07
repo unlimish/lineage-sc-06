@@ -12,7 +12,20 @@
 
 # RIL - docomo (Xi/FOMA) ------------------------------------------------------
 lib/libril.so
-lib/libsec-ril.so
+
+# lib/libsec-ril.so is NOT on a stock SC-06D (4.0.4). Extraction reports
+#     !! lib/libsec-ril.so: file not found in source
+# and, worse, setup-makefiles.sh still writes a rule for it, so the build
+# fails later on a file that was never there.
+#
+# Samsung's MSM8960 devices do not all use the same vendor RIL name. Find
+# out what this one actually has before adding anything back:
+#
+#   adb shell "ls /system/lib/ | grep -i ril"
+#
+# The d2att-unified tree lists the shared d2 RIL blobs in its own
+# proprietary-files.txt, so the odds are this belongs there, not here.
+# lib/libsec-ril.so
 
 # Fonts and emoji -------------------------------------------------------------
 fonts/truetypeEmoji.ttf
@@ -48,7 +61,10 @@ etc/felica/train.png
 
 # docomo extras ---------------------------------------------------------------
 app/WAPPushManager.apk
-app/SPModePushNotifier.apk
+
+# Also not present on a stock 4.0.4 SC-06D. spmode push needs the docomo
+# framework services, which a custom ROM does not have, so this is no loss.
+# app/SPModePushNotifier.apk
 
 # =============================================================================
 # ISDB-T / 1seg (ワンセグ)
@@ -75,9 +91,17 @@ app/SPModePushNotifier.apk
 #
 # Three proprietary files. That is the whole tuner path.
 #
-# lib/libonesegdmxdriver.so
-# lib/libonesegutils.so
-# lib/libPGL.so
+# These are ENABLED. They are the reason this project exists, they cost a
+# few hundred KB, and nothing on the system dlopens them except our own
+# app - so pulling them in is free even if they turn out not to load under
+# Pie's linker. Settle that question with
+#
+#   tools/analyze-oneseg-blobs.py oneseg-report/ --against <android9 system/lib>
+#
+# not by leaving them out of the build.
+lib/libonesegdmxdriver.so
+lib/libonesegutils.so
+lib/libPGL.so
 
 # --- Tier 2: the stock TS demuxer -- NOT NEEDED -------------------------
 #

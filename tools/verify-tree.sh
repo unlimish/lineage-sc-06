@@ -265,6 +265,45 @@ else
     ok "extraction scripts are executable"
 fi
 
+# d2att-unified still points at the CyanogenMod path.
+#
+#   $ ./extract-files.sh
+#   Unable to find helper script at ./../../../vendor/cm/build/tools/extract_utils.sh
+#
+# LineageOS renamed vendor/cm to vendor/lineage back in 14.1; that tree was
+# never updated. Nothing is missing from the sync - the path is just old.
+stale=""
+for f in device/samsung/d2att/extract-files.sh \
+         device/samsung/d2att/setup-makefiles.sh; do
+    [ -f "$ROOT/$f" ] || continue
+    grep -q 'vendor/cm/build/tools' "$ROOT/$f" 2>/dev/null && stale="$stale $ROOT/$f"
+done
+
+if [ -n "$stale" ]; then
+    note "d2att extraction scripts still reference vendor/cm (CyanogenMod path)"
+    info "Renamed to vendor/lineage in LineageOS 14.1. Point them at it:"
+    info "  sed -i 's|vendor/cm/build/tools|vendor/lineage/build/tools|' \\"
+    info "     $stale"
+    info "repo sync --force-sync reverts this, so redo it after a re-sync."
+fi
+
+# The three libraries this project exists for.
+if [ -d "$ROOT/vendor/samsung/d2dcm" ]; then
+    missing=""
+    for l in libonesegdmxdriver.so libonesegutils.so libPGL.so; do
+        find "$ROOT/vendor/samsung/d2dcm" -name "$l" -print -quit 2>/dev/null \
+            | grep -q . || missing="$missing $l"
+    done
+    if [ -z "$missing" ]; then
+        ok "1seg libraries extracted (libonesegdmxdriver, libonesegutils, libPGL)"
+    else
+        bad "1seg libraries NOT extracted:$missing"
+        info "Without these the ROM builds fine and cannot receive anything."
+        info "Check they are uncommented in d2dcm/proprietary-files.txt, then"
+        info "re-run device/samsung/d2dcm/extract-files.sh with the phone attached."
+    fi
+fi
+
 # --- summary --------------------------------------------------------------
 
 echo
