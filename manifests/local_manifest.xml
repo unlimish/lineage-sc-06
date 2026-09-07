@@ -99,4 +99,20 @@
         cd <LINEAGE_ROOT>/device/samsung/d2dcm  && ./extract-files.sh
   -->
 
+  <!--
+    OPTIONAL, and commented out on purpose.
+
+    external/chromium-webview/prebuilt/ carries a WebView APK per architecture,
+    and SC-06D is 32-bit ARM only - so arm64, x86 and x86_64 are dead weight,
+    a few hundred MB that also have to come through Git LFS.
+
+    Uncomment if disk is tight. Left off by default because removing projects
+    the build expects fails late and confusingly, and a few hundred MB is
+    rarely worth that risk.
+
+  <remove-project name="LineageOS/android_external_chromium-webview_prebuilt_arm64" />
+  <remove-project name="LineageOS/android_external_chromium-webview_prebuilt_x86" />
+  <remove-project name="LineageOS/android_external_chromium-webview_prebuilt_x86_64" />
+  -->
+
 </manifest>

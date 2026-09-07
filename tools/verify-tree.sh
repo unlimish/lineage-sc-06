@@ -149,6 +149,39 @@ if [ -f "$BC" ]; then
     esac
 fi
 
+# --- did the sync actually finish? ----------------------------------------
+#
+# repo reports failures at the end of a long run and they scroll away. A tree
+# that synced 713 of 715 projects looks fine until the build fails on
+# something unrelated-looking hours later, so check for the empty checkouts
+# that a partial sync leaves behind.
+
+echo
+echo "sync completeness:"
+
+incomplete=0
+for p in external/chromium-webview/prebuilt/arm build/make frameworks/base \
+         external/stlport hardware/qcom-caf; do
+    d="$ROOT/$p"
+    [ -e "$d" ] || continue
+    if [ -z "$(ls -A "$d" 2>/dev/null)" ]; then
+        bad "$p is present but EMPTY - that project did not check out"
+        incomplete=$((incomplete+1))
+    fi
+done
+
+if [ "$incomplete" -gt 0 ]; then
+    info "A common cause is git-lfs missing: the chromium-webview prebuilts are"
+    info "stored in LFS and fail at checkout with"
+    info "  git-lfs filter-process --skip: 1: git-lfs: not found"
+    info "Fix and re-sync - only the failed projects are refetched:"
+    info "  sudo apt install git-lfs && git lfs install"
+    info "  cd $ROOT && repo sync -c -j4 --no-clone-bundle --no-tags --force-sync"
+    fail=$((fail+incomplete))
+else
+    ok "no empty project directories"
+fi
+
 # --- blobs ----------------------------------------------------------------
 
 echo
