@@ -10,22 +10,34 @@
 #
 # Blobs are never committed to this repository.
 
-# RIL - docomo (Xi/FOMA) ------------------------------------------------------
-lib/libril.so
-
-# lib/libsec-ril.so is NOT on a stock SC-06D (4.0.4). Extraction reports
-#     !! lib/libsec-ril.so: file not found in source
-# and, worse, setup-makefiles.sh still writes a rule for it, so the build
-# fails later on a file that was never there.
+# RIL -------------------------------------------------------------------------
 #
-# Samsung's MSM8960 devices do not all use the same vendor RIL name. Find
-# out what this one actually has before adding anything back:
+# Nothing here. This section used to list lib/libril.so and lib/libsec-ril.so
+# and both were wrong.
+#
+# What a stock SC-06D (4.0.4) actually has, measured:
 #
 #   adb shell "ls /system/lib/ | grep -i ril"
+#     libreference-ril.so
+#     libril-qc-qmi-1.so
+#     libril-qcril-hook-oem.so
+#     libril.so
+#     libsecril-client.so
 #
-# The d2att-unified tree lists the shared d2 RIL blobs in its own
-# proprietary-files.txt, so the odds are this belongs there, not here.
-# lib/libsec-ril.so
+# libsec-ril.so is simply not among them - that name belongs to Samsung's
+# Exynos devices. SC-06D is MSM8960, so the vendor RIL is Qualcomm's QMI
+# stack: libril-qc-qmi-1.so, libril-qcril-hook-oem.so, libsecril-client.so.
+#
+# libril.so must NOT be extracted. It is not a blob at all - AOSP builds it
+# from hardware/ril/libril, and LineageOS 16.0 builds its own. Installing a
+# 2012 ICS copy over it would put an ICS libril underneath a Pie rild, and
+# would collide with the identical PRODUCT_COPY_FILES entry from d2att.
+#
+# The QMI blobs are shared across every d2 variant, so they belong to
+# d2att-unified's proprietary-files.txt, not here - same rule as the header.
+# If docomo's Xi/FOMA turns out to need something the other d2 variants do
+# not, this is where it goes, and the diff against d2att's list is how you
+# would find it.
 
 # Fonts and emoji -------------------------------------------------------------
 fonts/truetypeEmoji.ttf

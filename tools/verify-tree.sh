@@ -304,6 +304,28 @@ if [ -d "$ROOT/vendor/samsung/d2dcm" ]; then
     fi
 fi
 
+# Two vendor trees, one /system. extract_utils.sh writes a PRODUCT_COPY_FILES
+# line per blob, and if d2att and d2dcm both claim the same destination the
+# build fails on a duplicate entry - a long way from anything that names the
+# blob list. d2dcm is meant to hold only what is docomo-specific, so an
+# overlap is a bug in proprietary-files.txt rather than something to work
+# around in the makefiles.
+A="$ROOT/vendor/samsung/d2att/proprietary"
+B="$ROOT/vendor/samsung/d2dcm/proprietary"
+if [ -d "$A" ] && [ -d "$B" ]; then
+    dupes="$( { ( cd "$A" && find . -type f | sed 's|^\./||' )
+                ( cd "$B" && find . -type f | sed 's|^\./||' ) ; } \
+              | sort | uniq -d )"
+    if [ -n "$dupes" ]; then
+        bad "the same blob is claimed by both d2att and d2dcm:"
+        echo "$dupes" | head -20 | sed 's/^/       /'
+        info "Remove these from d2dcm/proprietary-files.txt - the shared d2"
+        info "blobs are d2att-unified's job - then re-extract d2dcm."
+    else
+        ok "no blob claimed by both d2att and d2dcm"
+    fi
+fi
+
 # --- summary --------------------------------------------------------------
 
 echo
