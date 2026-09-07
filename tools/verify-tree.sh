@@ -223,6 +223,48 @@ fi
     && ok "vendor/samsung/d2dcm (docomo blobs)" \
     || note "docomo blobs not extracted yet - run device/samsung/d2dcm/extract-files.sh"
 
+# Can the extraction scripts actually be run?
+#
+#   $ ./extract-files.sh
+#   bash: ./extract-files.sh: Permission denied
+#
+# Two different causes, and the message is the same for both: the file was
+# committed without its executable bit, or the tree is on a noexec mount.
+# Distinguish them, because the fixes are nothing alike.
+noexec=0
+probe="$ROOT/.verify-tree-exec-probe.$$"
+if printf '#!/bin/sh\nexit 0\n' > "$probe" 2>/dev/null; then
+    chmod +x "$probe" 2>/dev/null
+    "$probe" 2>/dev/null || noexec=1
+    rm -f "$probe"
+fi
+
+notx=""
+for f in device/samsung/d2att/extract-files.sh \
+         device/samsung/d2att/setup-makefiles.sh \
+         device/samsung/d2dcm/extract-files.sh \
+         device/samsung/d2dcm/setup-makefiles.sh; do
+    [ -f "$ROOT/$f" ] || continue
+    [ -x "$ROOT/$f" ] || notx="$notx $f"
+done
+
+if [ "$noexec" = 1 ]; then
+    bad "$ROOT is on a noexec mount - no script in the tree can run"
+    info "chmod will not help. Remount, or invoke through the interpreter:"
+    info "  cd $ROOT/device/samsung/d2dcm && bash ./extract-files.sh"
+elif [ -n "$notx" ]; then
+    note "extraction scripts are not executable:$notx"
+    info "Upstream device trees are not consistent about committing the"
+    info "executable bit. Either run them through bash:"
+    info "  cd $ROOT/device/samsung/d2att && bash ./extract-files.sh"
+    info "or set the bit once:"
+    for f in $notx; do
+        info "  chmod +x $ROOT/$f"
+    done
+else
+    ok "extraction scripts are executable"
+fi
+
 # --- summary --------------------------------------------------------------
 
 echo
