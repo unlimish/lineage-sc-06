@@ -37,14 +37,40 @@ echo
 [ -d "$ROOT/build" ]        && ok "build/ present"          || bad "build/ missing - repo sync did not finish"
 [ -d "$ROOT/vendor/lineage" ] && ok "vendor/lineage present" || bad "vendor/lineage missing"
 
-if [ -f "$ROOT/.repo/manifests/default.xml" ]; then
-    rev="$(grep -o 'revision="[^"]*"' "$ROOT/.repo/manifests/default.xml" | head -1 | cut -d'"' -f2)"
-    case "$rev" in
-        *16.0*) ok "manifest revision: $rev" ;;
-        "")     note "could not read the manifest revision" ;;
-        *)      note "manifest revision is '$rev', expected lineage-16.0"
-                info "Nothing newer than 16.0 exists for MSM8960 - see docs/01." ;;
-    esac
+# Which LineageOS branch was this tree initialised on?
+#
+# Do NOT read this off the first revision= in default.xml. In lineage-16.0
+# that attribute belongs to the <default>/github remote and reads
+# "refs/tags/android-9.0.0_r46" - the AOSP tag Pie was cut from, which is
+# exactly right for a 16.0 tree and looks exactly wrong to a naive grep.
+# The branch repo init was given is recorded by git instead.
+rev=""
+if [ -d "$ROOT/.repo/manifests" ]; then
+    rev="$(git -C "$ROOT/.repo/manifests" config --get branch.default.merge 2>/dev/null)"
+    rev="${rev#refs/heads/}"
+fi
+if [ -z "$rev" ] && [ -f "$ROOT/.repo/manifests/default.xml" ]; then
+    # Fallback: the lineage remote carries the branch for LineageOS's own
+    # projects, whatever the AOSP default says.
+    rev="$(grep -o 'name="lineage"[^>]*revision="[^"]*"' \
+             "$ROOT/.repo/manifests/default.xml" 2>/dev/null \
+           | head -1 | sed 's/.*revision="//; s/".*//; s|refs/heads/||')"
+fi
+
+case "$rev" in
+    *16.0*) ok "manifest branch: $rev" ;;
+    "")     note "could not read the manifest branch" ;;
+    *)      note "manifest branch is '$rev', expected lineage-16.0"
+            info "Nothing newer than 16.0 exists for MSM8960 - see docs/01." ;;
+esac
+
+# extract-files.sh needs this and says so only after you have gone looking
+# for a device.
+if [ -f "$ROOT/vendor/lineage/build/tools/extract_utils.sh" ]; then
+    ok "vendor/lineage/build/tools/extract_utils.sh (blob extraction helper)"
+else
+    bad "vendor/lineage/build/tools/extract_utils.sh missing"
+    info "extract-files.sh cannot run without it. Re-sync vendor/lineage."
 fi
 
 # --- device trees ----------------------------------------------------------
