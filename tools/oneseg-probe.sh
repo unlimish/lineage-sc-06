@@ -12,11 +12,22 @@
 # pulling /system off the device and searching the binaries for references to
 # the tuner device node, rather than guessing at file names.
 #
+# THIS RUNS ON YOUR COMPUTER, not on the phone. The phone only needs to be
+# plugged in over USB with USB debugging enabled. Nothing is installed on it,
+# and no Google account is involved - adb does not go through Play Services.
+#
 # Output lands in ./oneseg-report/.
 #
 # SPDX-License-Identifier: Apache-2.0
 
 set -u
+
+# Git Bash / MSYS on Windows rewrites any argument that looks like a Unix path,
+# so "su -c 'ls /dev/isdbt'" would reach the phone as
+# "ls C:/Program Files/Git/dev/isdbt" and every device-side command would fail
+# for no visible reason. Turn that off. Harmless on Linux and macOS.
+export MSYS_NO_PATHCONV=1
+export MSYS2_ARG_CONV_EXCL='*'
 
 REPORT_DIR="${ONESEG_REPORT_DIR:-$PWD/oneseg-report}"
 PULL_DIR="$REPORT_DIR/system"
@@ -70,12 +81,38 @@ mkdir -p "$REPORT_DIR" || die "cannot create $REPORT_DIR"
 say "oneseg-probe.sh - SC-06D 1seg stack survey"
 say "report: $REPORT_DIR"
 
-command -v adb >/dev/null 2>&1 || die "adb not found in PATH. Install android-tools / platform-tools."
+if ! command -v adb >/dev/null 2>&1; then
+    say ""
+    say "adb is not in PATH. It is the only thing this script needs installed."
+    say ""
+    say "  Windows : download 'SDK Platform-Tools for Windows' from"
+    say "            https://developer.android.com/tools/releases/platform-tools"
+    say "            unzip it, and run this script from Git Bash in that folder."
+    say "            (Use Git Bash, not WSL - WSL cannot see USB devices without"
+    say "            extra usbipd setup.)"
+    say "  macOS   : brew install --cask android-platform-tools"
+    say "  Ubuntu  : sudo apt install adb"
+    say "  Arch    : sudo pacman -S android-tools"
+    say ""
+    die "adb not found"
+fi
 
 hdr "0. device"
 
 state="$(adb get-state 2>/dev/null | tr -d '\r')"
-[ "$state" = "device" ] || die "no device in 'device' state (got: '${state:-none}'). Enable USB debugging and authorise this host."
+if [ "$state" != "device" ]; then
+    say ""
+    say "The phone is not visible to adb (state: '${state:-none}')."
+    say ""
+    say "  - USB debugging on?  設定 > 開発者向けオプション > USBデバッグ"
+    say "  - Try 'adb kill-server' then 'adb devices'."
+    say "  - Windows: the Samsung USB driver has to be installed."
+    say "  - Android 4.0.4 has no 'allow USB debugging?' dialog (that arrived in"
+    say "    4.2.2), so there is nothing to tap on the phone - if it still does"
+    say "    not appear, it is the cable, the port, or the driver."
+    say ""
+    die "no device in 'device' state"
+fi
 
 adb shell getprop 2>/dev/null | tr -d '\r' > "$REPORT_DIR/getprop.txt"
 

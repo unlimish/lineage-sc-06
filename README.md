@@ -113,17 +113,66 @@ tools/
 
 ### 1. まず実機を調べる（ワンセグを狙うなら必須・最重要）
 
-**純正のまま、root を取った SC-06D** で実行してください。
-4.0.4 でも 4.1.2 でも構いません（ワンセグは発売時の 4.0.4 から搭載されています）。
+対象は **純正のまま root を取った SC-06D**。4.0.4 でも 4.1.2 でも構いません
+（ワンセグは発売時の 4.0.4 から搭載されています）。
 LineageOS を焼く前でないと取れない情報です。
 
+> **スクリプトは PC で実行します。端末側では動きません。**
+> 端末は USB で挿しておくだけです。端末に何かをインストールすることもありません。
+>
+> **Google アカウントは不要です。** adb は Play Services を一切通らないので、
+> 「Play 開発者サービスが古くてログインできない」状態でも問題なく調査できます。
+
+#### 準備するもの: adb だけ
+
+| OS | 入れ方 |
+|---|---|
+| Windows | [Platform-Tools](https://developer.android.com/tools/releases/platform-tools) を展開し、**Git Bash** で実行（WSL は USB が見えないので不可）。Samsung USB ドライバも必要 |
+| macOS | `brew install --cask android-platform-tools` |
+| Ubuntu/Debian | `sudo apt install adb` |
+| Arch | `sudo pacman -S android-tools` |
+
+#### 手順
+
 ```bash
-adb devices          # SC-06D が見えることを確認
-./tools/oneseg-probe.sh
+# 1. 端末側: 設定 > 開発者向けオプション > USB デバッグ を ON にして USB 接続
+#    （Android 4.0.4 には「USBデバッグを許可しますか?」のダイアログはありません。
+#      あれは 4.2.2 からです。挿すだけで繋がります）
+
+# 2. PC 側: 見えているか確認
+adb devices
+#   List of devices attached
+#   xxxxxxxx        device        ← "device" と出れば OK
+
+# 3. このリポジトリを取ってきて実行
+git clone https://github.com/unlimish/lineage-sc-06.git
+cd lineage-sc-06
+bash tools/oneseg-probe.sh
 ```
 
-`oneseg-report/` に、ワンセグスタックの構成（apk / .so / firmware / 鍵っぽいファイル /
-`/dev/isdbt` の有無 / SPI の状態）が保存されます。**これがないとワンセグ移植は始まりません。**
+`chmod +x` を忘れて `Permission denied` になる場合があるので、
+上のように **`bash tools/oneseg-probe.sh`** と書くのが確実です。
+
+途中で root 権限を求めるので、**端末の画面に出る SuperSU / SuperUser の許可ダイアログを
+見逃さないでください**（タイムアウトで拒否されると root 部分が丸ごと欠けます）。
+
+#### 結果
+
+`oneseg-report/` に保存されます。まず見るのはこの 3 つ:
+
+| ファイル | 何がわかるか |
+|---|---|
+| `dmesg-isdbt.txt` | ワンセグのチューナが正常に認識されているか |
+| `hits-devnode.txt` | **`/dev/isdbt` を開いているライブラリはどれか**（移植の本丸） |
+| `by-name.txt` | 実際のパーティション構成（`BoardConfig.mk` 用） |
+
+続けて依存関係を解析します。
+
+```bash
+python3 tools/analyze-oneseg-blobs.py oneseg-report/
+```
+
+**これがないとワンセグ移植は始まりません。**
 
 ### 2. LineageOS 16.0 をビルドする
 
