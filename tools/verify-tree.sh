@@ -223,18 +223,41 @@ echo "vendor blobs:"
 # and hands you a flashable zip with no graphics, audio or radio, and
 # nothing says so at build time. This check is the only thing that will.
 D2COMMON=""
-for d in msm8960-common d2-common; do
+for d in d2-common msm8960-common; do
     [ -d "$ROOT/vendor/samsung/$d" ] && D2COMMON="$ROOT/vendor/samsung/$d" && break
 done
 if [ -n "$D2COMMON" ]; then
     ok "vendor/samsung/$(basename "$D2COMMON") (d2 common blobs)"
 else
-    bad "d2 common blobs not extracted - no vendor/samsung/msm8960-common"
+    bad "d2 common blobs missing - no vendor/samsung/d2-common"
     info "The build will still SUCCEED without them and produce a ROM with"
     info "no graphics, audio or radio: device.mk uses inherit-product-if-exists."
-    info "d2att's own extract-files.sh does not run (it is a CyanogenMod-era"
-    info "script for a tree layout that no longer exists). Use:"
-    info "  tools/extract-d2att.sh"
+    info "These are prebuilt - do not extract them from the phone. Update"
+    info "manifests/local_manifest.xml and re-sync:"
+    info "  cp <this repo>/manifests/local_manifest.xml \\"
+    info "     $ROOT/.repo/local_manifests/d2dcm.xml"
+    info "  cd $ROOT && repo sync -c -j4 --no-clone-bundle --no-tags"
+fi
+
+# The Adreno userspace. Nobody publishes it, it is not in the vendor
+# repository, and the phone only has it if the phone is on Jelly Bean.
+# Without it the build succeeds and the device does not draw anything, so
+# this is worth saying loudly and early rather than after a flash.
+gpu_missing=""
+for l in libgsl.so libEGL_adreno.so libGLESv2_adreno.so libadreno_utils.so; do
+    find "$ROOT/vendor/samsung" -name "$l" -print -quit 2>/dev/null | grep -q . \
+        || gpu_missing="$gpu_missing $l"
+done
+if [ -z "$gpu_missing" ]; then
+    ok "Adreno GPU blobs present"
+elif [ -n "$D2COMMON" ]; then
+    bad "Adreno GPU blobs missing:$gpu_missing"
+    info "There is no display without these, and no published source for"
+    info "them: vendor/samsung/d2-common does not carry them. They have to"
+    info "come from a stock Android 4.1.2 SC-06D - the handset itself if it"
+    info "is on 4.1.2, or an extracted 4.1.2 firmware image. On 4.0.4 they"
+    info "sit in lib/egl/ under different names and are built against an"
+    info "older KGSL interface than this kernel exposes. See docs/03."
 fi
 
 [ -d "$ROOT/vendor/samsung/d2dcm" ] \

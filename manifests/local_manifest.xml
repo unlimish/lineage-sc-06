@@ -80,6 +80,37 @@
            revision="main" />
 
   <!--
+    The shared d2 blobs, prebuilt.
+
+    These do NOT come off your phone, and the reason matters. The blob list
+    in d2att-unified targets a stock Android 4.1.2 (Jelly Bean) SC-06D: it
+    asks for Qualcomm libraries under vendor/lib/, and on 4.0.4 (ICS) those
+    same libraries live in lib/. Extracting from an ICS handset therefore
+    fails on every vendor/lib/ path - 53 of 114 files - and no amount of
+    re-running fixes it.
+
+    This repository carries 95 of those 114 already built, at the Jelly Bean
+    versions the tree expects, so most of that problem disappears. It is the
+    same path device.mk reads:
+
+        $(call inherit-product-if-exists,
+               vendor/samsung/d2-common/d2-common-vendor.mk)
+
+    revision="main" is deliberate and is not a mistake: this repository has
+    no lineage-16.0 branch (verified against the remote), only a single
+    "initial release" commit from December 2020 on main.
+
+    What it does NOT carry is the Adreno userspace - libgsl.so,
+    libEGL_adreno.so and the rest of vendor/lib/egl/ - plus Widevine. Those
+    are the 15 files nobody has published, and without them there is no
+    display at all. See docs/03.
+  -->
+  <project name="android_vendor_samsung_d2-common"
+           path="vendor/samsung/d2-common"
+           remote="s3msm8960"
+           revision="main" />
+
+  <!--
     device/samsung/d2dcm is NOT listed here.
 
     It lives inside this project repository (lineage-sc-06) under

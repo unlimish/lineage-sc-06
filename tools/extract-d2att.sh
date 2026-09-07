@@ -48,8 +48,18 @@
 
 set -e
 
-VENDOR=samsung
-COMMON=msm8960-common
+# NOT named VENDOR or COMMON. extract_utils.sh owns both of those names -
+# it initialises COMMON=-1 at source time - so a plain COMMON=msm8960-common
+# set before the source is silently replaced, and everything lands in
+# vendor/samsung/-1 instead. Prefix them out of its way.
+D2_VENDOR=samsung
+D2_COMMON=msm8960-common
+
+# The guard write_headers puts around the generated Android.mk. A common
+# vendor tree has no single device to infer it from, so it must be given
+# one: without it extract_utils stops with "Argument with devices to be
+# added to guard must be set!".
+D2_GUARD_DEVICES="d2att d2can d2cri d2dcm d2lte d2mtr d2spr d2tmo d2usc d2vzw"
 
 HELPER_REL=vendor/lineage/build/tools/extract_utils.sh
 
@@ -105,19 +115,19 @@ fi
 
 echo "extracting $(grep -cvE '^[[:space:]]*#|^[[:space:]]*$' "$LIST") blobs"
 echo "  from : $SRC"
-echo "  into : $ANDROID_ROOT/vendor/$VENDOR/$COMMON"
+echo "  into : $ANDROID_ROOT/vendor/$D2_VENDOR/$D2_COMMON"
 echo
 
 # true = this is a "common" vendor tree, so the generated makefile is named
-# after $COMMON rather than after a device.
-setup_vendor "$COMMON" "$VENDOR" "$ANDROID_ROOT" true
+# after $D2_COMMON rather than after a device.
+setup_vendor "$D2_COMMON" "$D2_VENDOR" "$ANDROID_ROOT" true
 
 extract "$LIST" "$SRC"
 
 # d2att's setup-makefiles.sh is unusable for the same reason as its
 # extract-files.sh, so generate the makefiles here.
-setup_vendor "$COMMON" "$VENDOR" "$ANDROID_ROOT" true
-write_headers
+setup_vendor "$D2_COMMON" "$D2_VENDOR" "$ANDROID_ROOT" true
+write_headers "$D2_GUARD_DEVICES"
 write_makefiles "$LIST" true
 write_footers
 
