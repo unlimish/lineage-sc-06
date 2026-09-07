@@ -154,14 +154,21 @@ Ctrl-C here when done.
 
 EOF
 
+# Ctrl-C is the normal way to end a capture, so it must not skip the summary.
+# With a trap installed, bash runs the handler and carries on to the next
+# command instead of tearing the script down with the pipeline.
+trap 'echo; echo "(capture stopped)"' INT
+
 if [ -n "$OUT" ]; then
     echo "following, and saving to $OUT ..."
     echo
     adb logcat -v time 2>/dev/null | grep --line-buffered -E "$PATTERN" | tee "$OUT"
-    echo
     summarise "$OUT"
 else
-    echo "following (use -o FILE to keep a copy) ..."
+    echo "following (use -o FILE to keep a copy and get a summary) ..."
     echo
     adb logcat -v time 2>/dev/null | grep --line-buffered -E "$PATTERN"
+    echo
+    echo "Nothing was saved. Re-run with -o run.log to keep the capture and"
+    echo "get a summary of it."
 fi
