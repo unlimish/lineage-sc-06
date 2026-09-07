@@ -79,22 +79,37 @@ app/SPModePushNotifier.apk
 # lib/libonesegutils.so
 # lib/libPGL.so
 
-# --- Tier 2: the stock TS demuxer ---------------------------------------
+# --- Tier 2: the stock TS demuxer -- NOT NEEDED -------------------------
 #
-# Only needed if you want Samsung's demuxer rather than your own. It drags in
-# libbinder and libandroid_runtime, so it is much harder to load on Pie - and
-# a 1seg TS is plain MPEG-2 TS, which anything can demux. Prefer your own.
+# Design decision (2026-09): recording writes the received transport stream
+# straight to a file, byte for byte, and CPRM is not implemented.
 #
-# libonesegcprmapi.so is CPRM, the protection applied to *recordings* on SD
-# card. It reads key material from /efs/. Reception does not need it.
+# That is not a shortcut past anything. 1seg is broadcast in the clear, so
+# there is no scrambling on the reception path to undo. CPRM
+# (libonesegcprmapi.so) is the wrapper Samsung applied to recordings it wrote
+# to SD card, keyed from /efs/ - a format this app simply never produces.
+# Writing a plain .ts is not "removing" CPRM; it is never adding it.
 #
-# lib/libonesegdemux.so
-# lib/libsdtvphmem.so
-# lib/libsdtvcrypto.so
-# lib/libonesegcprmapi.so
-# lib/libBroadcastProcObs.so
-# bin/OneSegTsDemux
-# bin/broadcastProcessObserver
+# What that decision removes from the port:
+#
+#   libonesegcprmapi.so    CPRM - and with it the /efs dependency
+#   libsdtvcrypto.so       its crypto helper
+#   libonesegdemux.so      Samsung's demuxer (libbinder, libandroid_runtime)
+#   libsdtvphmem.so        its shared-memory plumbing
+#   libBroadcastProcObs.so process observer
+#   bin/OneSegTsDemux, bin/broadcastProcessObserver
+#
+# Recording and viewing become the same data path with two sinks: the bytes
+# already in hand go to the decoder and, when recording, to a file as well.
+# See docs/08-アプリ設計.md.
+#
+# One nuance worth knowing rather than discovering later: the stream carries
+# broadcast copy-control signalling (digital_copy_control_descriptor). A
+# receiver certified against the ARIB rules is expected to act on it. A
+# personal recording on your own hardware is a different question from
+# circumventing a protection measure - there is no protection measure on this
+# path - but if this app were ever distributed as a product, that signalling
+# is the part to revisit.
 
 # --- Tier 3: service and EPG layer, and the app glue ---------------------
 #

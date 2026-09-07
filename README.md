@@ -82,7 +82,9 @@ SC-06D はフルセグ非対応なので、**そもそも関係ありません**
   **移植対象の独自ライブラリは 3 つ**
 - しかも **`libbinder` / `libandroid_runtime` / `libsurfaceflinger_client` を要求しない**
   （後者は Android 9 に存在しないライブラリ。これを避けられるのが大きい）
-- 暗号（CPRM）は**録画パス**にあり、受信パスには無い
+- 暗号（CPRM）は**録画パス**にあり、受信パスには無い。
+  **録画を「TS をそのまま書く」方式にすると決めた**ので、CPRM ごと移植対象外
+  → 純正から持ち込むのは**上記 3 ファイルで全部**（[`docs/08`](docs/08-アプリ設計.md)）
 - データ放送（DSM-CC/BML）と NexPlayer は**移植不要**
 
 詳細と次の一手は [`docs/07-実機調査の結果.md`](docs/07-実機調査の結果.md)。
@@ -103,6 +105,7 @@ docs/                            ドキュメント（日本語）
   05-ワンセグ移植の手順.md        ワンセグを通すための段階的な攻略手順
   06-調査ログ.md                  上の結論の一次ソース（実際に確認したコード）
   07-実機調査の結果.md            ★実機 SC-06D から判明した事実（唯一の実測データ）
+  08-アプリ設計.md                視聴・録画アプリの構成（録画は TS をそのまま書く）
 
 device/samsung/d2dcm/            SC-06D 用デバイスツリー（LineageOS 16.0 向け・未検証）
   BoardConfig.mk                 d2att-unified を継承して SC-06D 差分を上書き
@@ -118,6 +121,7 @@ manifests/local_manifest.xml     repo sync 用マニフェスト
 tools/
   oneseg-probe.sh                純正 ROM のワンセグスタックを実機から調査する（最重要）
   analyze-oneseg-blobs.py        ELF 依存関係の解析 / --symbols でエクスポート関数一覧
+  isdbt-dump.c                   /dev/isdbt を開いて電源を入れ、読めたものを保存する
   link-device-tree.sh            d2dcm ツリーを Lineage ツリーに繋ぐ
   verify-tree.sh                 ビルド前の静的チェック
 ```
