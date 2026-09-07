@@ -17,6 +17,23 @@ proprietary/
 out/
 *.zip
 
+# A LineageOS tree does not belong in here - repo init goes in a separate
+# directory entirely (docs/03 section 3, and tools/link-device-tree.sh
+# refuses to point at this one). These are here so that a mistake stays
+# invisible to git rather than burying the project in untracked files.
+.repo/
+build/
+frameworks/
+prebuilts/
+external/
+system/
+bionic/
+art/
+libcore/
+packages/
+hardware/
+kernel/samsung/
+
 # Editors and OS
 *.swp
 *~

@@ -25,7 +25,32 @@ ROOT="$1"
 
 [ -d "$SRC" ] || { echo "error: $SRC not found - is this repo intact?" >&2; exit 1; }
 [ -d "$ROOT" ] || { echo "error: $ROOT does not exist" >&2; exit 1; }
-[ -d "$ROOT/.repo" ] || { echo "error: $ROOT does not look like a repo tree (no .repo/)" >&2; exit 1; }
+
+# Refuse to treat this repository as the Lineage tree. Running repo init inside
+# it nests hundreds of git repositories in a git repository, which is a mess to
+# unpick - so catch the mistake at the point it becomes visible.
+ROOT_ABS="$(cd "$ROOT" && pwd)"
+case "$ROOT_ABS" in
+    "$MY_DIR"|"$MY_DIR"/*)
+        echo "error: $ROOT is inside this project repository." >&2
+        echo >&2
+        echo "The LineageOS tree belongs somewhere else entirely - repo init" >&2
+        echo "unpacks .repo/ and hundreds of git repositories, and nesting" >&2
+        echo "that inside $MY_DIR leaves both unusable." >&2
+        echo >&2
+        echo "  mkdir -p ~/lineage && cd ~/lineage" >&2
+        echo "  repo init -u https://github.com/LineageOS/android.git \\" >&2
+        echo "      -b lineage-16.0 --depth=1 --no-clone-bundle" >&2
+        echo >&2
+        echo "then run this again with that directory." >&2
+        exit 1 ;;
+esac
+
+[ -d "$ROOT/.repo" ] || {
+    echo "error: $ROOT has no .repo/ - it is not a synced repo tree." >&2
+    echo "       Run repo init and repo sync there first; see docs/03." >&2
+    exit 1
+}
 
 if [ ! -d "$ROOT/device/samsung/d2att" ]; then
     echo "error: $ROOT/device/samsung/d2att is missing." >&2
