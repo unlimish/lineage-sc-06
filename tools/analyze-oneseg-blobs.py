@@ -408,6 +408,43 @@ def show_symbols(sysroot, pattern):
 PORT_LIBS = ["libonesegdmxdriver.so", "libonesegutils.so", "libPGL.so"]
 
 
+# Symbols the NDK's stub libraries do not list but the platform's own
+# libc.so still exports.
+#
+# An NDK stub carries the *public NDK API* for an API level, which is a
+# deliberately smaller set than what /system/lib/libc.so actually exports.
+# Bionic keeps a compatibility section on ARM specifically so that old
+# prebuilt binaries - exactly the sort of thing this project is porting -
+# keep resolving: the __aeabi_ compiler-runtime helpers it re-exports from
+# libgcc, and a handful of pre-5.0 internals like __set_errno.
+#
+# So an unresolved name from this list, checked against NDK stubs, is not
+# evidence of anything. Checked against a real Android 9 system/lib it
+# would be. Keep the two cases apart rather than reporting both as
+# "missing".
+ARM_LEGACY_COMPAT = frozenset((
+    # compiler runtime: libgcc's, re-exported by bionic's libc.so
+    "__aeabi_idiv", "__aeabi_idivmod", "__aeabi_uidiv", "__aeabi_uidivmod",
+    "__aeabi_ldivmod", "__aeabi_uldivmod", "__aeabi_lasr", "__aeabi_llsl",
+    "__aeabi_llsr", "__aeabi_lmul",
+    "__aeabi_unwind_cpp_pr0", "__aeabi_unwind_cpp_pr1", "__aeabi_unwind_cpp_pr2",
+    "__aeabi_memcpy", "__aeabi_memcpy4", "__aeabi_memcpy8",
+    "__aeabi_memmove", "__aeabi_memmove4", "__aeabi_memmove8",
+    "__aeabi_memset", "__aeabi_memset4", "__aeabi_memset8",
+    "__aeabi_memclr", "__aeabi_memclr4", "__aeabi_memclr8",
+    "__aeabi_atexit", "__aeabi_f2ulz", "__aeabi_d2ulz",
+    # bionic ARM legacy exports, kept for binaries built before 5.0
+    "__set_errno", "__get_tls", "__srget", "__swbuf", "__swsetup", "__sF",
+))
+
+# Platform libraries the NDK has never exposed. Missing from an NDK-stub
+# target says nothing about whether Android 9 has them - it does.
+NDK_ABSENT_LIBS = frozenset((
+    "libcutils.so", "libutils.so", "libstdc++.so", "libbinder.so",
+    "libgui.so", "libui.so", "libhardware.so", "libsysutils.so",
+))
+
+
 def find_ndk_arm_sysroot():
     """Locate the NDK's 32-bit ARM stub libraries for API 28.
 
@@ -593,6 +630,15 @@ def check_port(sysroot, target_dirs):
               % ", ".join(base_absent))
         print("      %s are reported as unresolved but are not proven missing."
               % " or ".join(base_absent))
+
+    # NDK stubs have a libc but none of the platform-only libraries, and
+    # that shape changes how the results below should be read.
+    ndk_target = "libcutils.so" not in target_libs
+    if ndk_target:
+        print("target looks like NDK stub libraries (a libc, but no libcutils).")
+        print("Those carry the public NDK API, which is smaller than what the")
+        print("platform's own libc.so exports - so results are read below with")
+        print("bionic's ARM compatibility exports taken into account.")
     print()
 
     # The libraries we ship also satisfy each other.
@@ -621,25 +667,37 @@ def check_port(sysroot, target_dirs):
             continue
 
         miss_lib = [n for n in needed if n not in target_libs]
-        if miss_lib:
+        excused_lib = [n for n in miss_lib if ndk_target and n in NDK_ABSENT_LIBS]
+        hard_lib = [n for n in miss_lib if n not in excused_lib]
+        if hard_lib:
             verdict_ok = False
             print("  MISSING LIBRARIES:")
-            for n in miss_lib:
+            for n in hard_lib:
                 print("    %s" % n)
+        elif excused_lib:
+            print("  all %d DT_NEEDED accounted for (%s not in the NDK, but"
+                  % (len(needed), ", ".join(excused_lib)))
+            print("  present on Android 9)")
         else:
             print("  all %d DT_NEEDED present" % len(needed))
 
         unresolved = [x for x in imports if x not in provided]
-        if unresolved:
+        compat = [x for x in unresolved if ndk_target and x in ARM_LEGACY_COMPAT]
+        hard = [x for x in unresolved if x not in compat]
+        if hard:
             verdict_ok = False
             print("  UNRESOLVED SYMBOLS (%d of %d required):"
-                  % (len(unresolved), len(imports)))
-            for x in unresolved[:40]:
+                  % (len(hard), len(imports)))
+            for x in hard[:40]:
                 print("    %s" % x)
-            if len(unresolved) > 40:
-                print("    ... and %d more" % (len(unresolved) - 40))
+            if len(hard) > 40:
+                print("    ... and %d more" % (len(hard) - 40))
         else:
-            print("  all %d required symbols resolve" % len(imports))
+            print("  all %d required symbols resolve%s"
+                  % (len(imports), " (see below)" if compat else ""))
+        if compat:
+            print("  not in the NDK stub, exported by the real libc.so: %s"
+                  % ", ".join(compat))
 
         weak_missing = [x for x in weak if x not in provided]
         if weak_missing:
@@ -648,7 +706,31 @@ def check_port(sysroot, target_dirs):
         print()
 
     print("=" * 72)
-    if verdict_ok:
+    if verdict_ok and ndk_target:
+        print("Nothing blocking found.")
+        print()
+        print("Every symbol these libraries import is in Android 9's public")
+        print("NDK API, except for bionic's ARM compatibility exports - the")
+        print("__aeabi_ compiler-runtime helpers and a couple of pre-5.0")
+        print("internals - which the stub omits and the real libc.so keeps,")
+        print("precisely so that prebuilts of this vintage keep loading.")
+        print()
+        print("libcutils and libutils could not be checked at all: the NDK has")
+        print("never exposed them. They exist on Android 9, and nothing here")
+        print("suggests trouble, but the symbols these libraries take from them")
+        print("are the ones still unverified.")
+        print()
+        print("To settle both, build just those libraries - it needs no GPU")
+        print("blobs and takes minutes rather than hours:")
+        print()
+        print("  cd <lineage root> && source build/envsetup.sh")
+        print("  lunch lineage_d2dcm-userdebug")
+        print("  m libc libcutils libutils libstdc++ liblog libm")
+        print()
+        print("then re-run against the result:")
+        print()
+        print("  --against <lineage root>/out/target/product/d2dcm/system/lib")
+    elif verdict_ok:
         print("Every dependency and symbol resolves against that target.")
         print()
         print("That is the static half of the question answered: the linker has")
