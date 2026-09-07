@@ -127,6 +127,7 @@ tools/
   build-android.sh               実機用ツールを正しいフラグでビルド＋PIE 検査
   isdbt-dump.c                   /dev/isdbt を開いて電源を入れ、読めたものを保存する
   oneseg-api-probe.c             純正ライブラリを dlopen してチューナ API を直接叩く
+  oneseg-logcat.sh               純正アプリの自己ログを捕まえて要約する（要コンパイル無し）
   link-device-tree.sh            d2dcm ツリーを Lineage ツリーに繋ぐ
   verify-tree.sh                 ビルド前の静的チェック
 ```

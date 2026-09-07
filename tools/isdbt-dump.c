@@ -176,11 +176,12 @@ int main(int argc, char **argv)
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
 
-    /* Unbuffered: piped through "adb shell su -c", stdout is fully buffered,
-     * so anything printed before a crash is lost with the buffer. That is how
-     * a segfault inside dlopen came back as a bare "Segmentation fault" with
-     * no output at all. */
-    setvbuf(stdout, NULL, _IONBF, 0);
+    /*
+     * No setvbuf(stdout, ...) here. It works in the static glibc build this
+     * file is normally made with, but crashes if built against Bionic: the
+     * `stdout` variable only exists from API 23, and on 4.0.4 the import
+     * resolves to NULL. See the note in oneseg-api-probe.c.
+     */
 
     printf("isdbt-dump - SC-06D tuner path check\n");
     printf("====================================\n\n");

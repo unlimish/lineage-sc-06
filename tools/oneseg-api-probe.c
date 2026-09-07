@@ -96,11 +96,60 @@
 #include <fcntl.h>
 #include <setjmp.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+
+/*
+ * Output goes through write(2), not stdio, and the printf calls below are
+ * redirected to it.
+ *
+ * Two reasons, both learned the hard way on this device:
+ *
+ *   - Piped through "adb shell su -c", stdio is fully buffered, so everything
+ *     printed before a crash dies with the buffer. Diagnostics that do not
+ *     survive the crash they are diagnosing are useless.
+ *
+ *   - The obvious fix, setvbuf(stdout, NULL, _IONBF, 0), segfaults here.
+ *     Bionic only exported `stdout` as a real FILE* variable from API 23; on
+ *     4.0.4 it is a macro over __sF[]. NDK r21's headers assume the modern
+ *     form, so the copy relocation for `stdout` finds nothing and leaves NULL,
+ *     and setvbuf dereferences it:
+ *
+ *       signal 11 (SIGSEGV), fault addr 00000000, r0 00000000
+ *       #00 pc 0001cf8c /system/lib/libc.so (setvbuf)
+ *
+ *     printf itself is fine - it uses libc's own internal stdout, not the
+ *     symbol we would have imported. Avoiding the symbol entirely is simpler
+ *     than reasoning about which Bionic exports what.
+ */
+static void emit(const char *fmt, ...)
+{
+    char buf[2048];
+    va_list ap;
+    int n;
+
+    va_start(ap, fmt);
+    n = vsnprintf(buf, sizeof buf, fmt, ap);
+    va_end(ap);
+
+    if (n < 0) return;
+    if (n > (int)sizeof buf - 1) n = (int)sizeof buf - 1;
+
+    {
+        int off = 0;
+        while (off < n) {
+            ssize_t w = write(1, buf + off, (size_t)(n - off));
+            if (w <= 0) break;
+            off += (int)w;
+        }
+    }
+}
+
+#define printf emit
 
 #define LIB_DEFAULT "/system/lib/libonesegdmxdriver.so"
 #define TS_PACKET   188
@@ -284,12 +333,6 @@ int main(int argc, char **argv)
         }
     }
     if (seconds <= 0) seconds = 10;
-
-    /* Unbuffered: piped through "adb shell su -c", stdout is fully buffered,
-     * so anything printed before a crash is lost with the buffer. That is how
-     * a segfault inside dlopen came back as a bare "Segmentation fault" with
-     * no output at all. */
-    setvbuf(stdout, NULL, _IONBF, 0);
 
     printf("oneseg-api-probe\n================\n\n");
 
