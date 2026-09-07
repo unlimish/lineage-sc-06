@@ -44,7 +44,16 @@
 #   ./tools/extract-d2att.sh                     from the phone over adb
 #   ./tools/extract-d2att.sh /path/to/stock/rom  from an extracted ROM
 #
+#   ./tools/extract-d2att.sh -l LIST [SRC]       use a different blob list
+#
 #   LINEAGE_ROOT=~/lineage ./tools/extract-d2att.sh    if you have not lunched
+#
+# On a 4.0.4 handset this fails on 53 of the 114 files, all of them under
+# vendor/lib/: that list targets stock 4.1.2, where Qualcomm's libraries
+# moved from lib/ to vendor/lib/. 95 of the 114 are prebuilt in
+# vendor/samsung/d2-common, which local_manifest.xml now syncs, so on 4.0.4
+# reach for that rather than this. What remains is the Adreno userspace -
+# see tools/d2att-gpu-from-ics.txt.
 
 set -e
 
@@ -91,6 +100,23 @@ fi
 
 D2ATT="$ANDROID_ROOT/device/samsung/d2att"
 LIST="$D2ATT/proprietary-files.txt"
+
+LIST_OVERRIDE=""
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -l|--list) LIST_OVERRIDE="$2"; shift 2 ;;
+        -h|--help) sed -n '3,40p' "$0" | sed 's/^# \?//'; exit 0 ;;
+        *)         break ;;
+    esac
+done
+
+if [ -n "$LIST_OVERRIDE" ]; then
+    if [ ! -f "$LIST_OVERRIDE" ]; then
+        echo "no such list: $LIST_OVERRIDE" >&2
+        exit 1
+    fi
+    LIST="$(cd "$(dirname "$LIST_OVERRIDE")" && pwd)/$(basename "$LIST_OVERRIDE")"
+fi
 
 if [ ! -f "$LIST" ]; then
     echo "No $LIST"

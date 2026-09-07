@@ -1,0 +1,65 @@
+# Adreno userspace, mapped from where Android 4.0.4 keeps it.
+#
+# READ THIS BEFORE USING IT. This is a long shot, not a fix.
+#
+# The 15 GPU blobs d2att-unified wants are published nowhere:
+# not in vendor/samsung/d2-common, not in the device tree, not in any
+# repository of the Samsung-Galaxy-S3-MSM8960 organisation. They are
+# meant to come off a stock 4.1.2 handset.
+#
+# A 4.0.4 handset has some of them, under the 2xx-era names and in lib/
+# rather than vendor/lib/. This file maps src:dst so they land where the
+# build expects. Confirmed present on a stock SC-06D 4.0.4 (SC06DOMAMA2):
+#
+#   /system/lib/egl/libEGL_adreno200.so   and its five siblings
+#   /system/lib/libgsl.so       55100 bytes, 2012-07-25
+#   /system/lib/libC2D2.so      46900 bytes, 2012-07-25
+#
+# Why it will probably not work anyway:
+#
+#   - KGSL, the kernel side of this driver, changed its ioctl interface
+#     between ICS and Jelly Bean. The lineage-16.0 d2 kernel exposes the
+#     later one. A 2012-07 userspace talking to it is not a version skew
+#     you can shim around; it is a different protocol.
+#   - Android 9's EGL loader expects EGL_ANDROID_native_fence_sync,
+#     gralloc1 and hwc2 interop, and an ANativeWindow ABI that postdates
+#     this driver by four releases.
+#
+# Jelly Bean Adreno on Pie is already the stretch that d2att-unified's
+# shims exist to cover. ICS Adreno on Pie is a further two releases back.
+#
+# The reliable route is a stock 4.1.2 SC-06D image - and note you do NOT
+# have to flash it. Unpack it and point the extractor at the directory:
+#
+#     tools/extract-d2att.sh /path/to/extracted/4.1.2/rom
+#
+# If you want to try this anyway:
+#
+#     tools/extract-d2att.sh -l tools/d2att-gpu-from-ics.txt
+#
+# It writes into vendor/samsung/msm8960-common, which device.mk also
+# inherits, so it sits alongside vendor/samsung/d2-common rather than
+# fighting it.
+
+lib/egl/eglsubAndroid.so:vendor/lib/egl/eglsubAndroid.so
+lib/egl/libEGL_adreno200.so:vendor/lib/egl/libEGL_adreno.so
+lib/egl/libGLESv1_CM_adreno200.so:vendor/lib/egl/libGLESv1_CM_adreno.so
+lib/egl/libGLESv2S3D_adreno200.so:vendor/lib/egl/libGLESv2S3D_adreno.so
+lib/egl/libGLESv2_adreno200.so:vendor/lib/egl/libGLESv2_adreno.so
+lib/egl/libq3dtools_adreno200.so:vendor/lib/egl/libq3dtools_adreno.so
+lib/libC2D2.so:vendor/lib/libC2D2.so
+lib/libgsl.so:vendor/lib/libgsl.so
+
+# Not confirmed on 4.0.4 - check before uncommenting, because a listed
+# file that does not exist still gets an install rule written for it and
+# fails the build later:
+#
+#   adb shell "ls /system/lib/ | grep -E 'adreno_utils|libCB|OpenCL|OpenVG|c2d2_z180|sc-a2xx|uiblur'"
+#
+# lib/libadreno_utils.so:vendor/lib/libadreno_utils.so
+# lib/libCB.so:vendor/lib/libCB.so
+# lib/libOpenCL.so:vendor/lib/libOpenCL.so
+# lib/libOpenVG.so:vendor/lib/libOpenVG.so
+# lib/libc2d2_z180.so:vendor/lib/libc2d2_z180.so
+# lib/libsc-a2xx.so:vendor/lib/libsc-a2xx.so
+# lib/libuiblur.so:vendor/lib/libuiblur.so
