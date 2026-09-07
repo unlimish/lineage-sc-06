@@ -108,6 +108,7 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <setjmp.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -174,6 +175,7 @@ static void emit(const char *fmt, ...)
 typedef long (*fn4_t)(long, long, long, long);
 
 static void *g_lib;
+static int g_tsfd = -1;
 static sigjmp_buf g_jmp;
 static volatile sig_atomic_t g_faulted;
 
@@ -279,6 +281,25 @@ static size_t printable_run(const char *p, char *dst, size_t dstsz)
 
     sigaction(SIGSEGV, &old_segv, NULL);
     return i;
+}
+
+/* Read an int through a pointer that may not be valid. -1 if unreadable. */
+static int read_int_sym(const char *name)
+{
+    struct sigaction sa, old_segv;
+    const int *p = (const int *)dlsym(g_lib, name);
+    int v = -1;
+
+    if (!p) return -1;
+
+    memset(&sa, 0, sizeof sa);
+    sa.sa_handler = fault_handler;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGSEGV, &sa, &old_segv);
+    g_faulted = 0;
+    if (sigsetjmp(g_jmp, 1) == 0) v = *p;
+    sigaction(SIGSEGV, &old_segv, NULL);
+    return v;
 }
 
 static void print_str_sym(const char *name)
@@ -547,10 +568,58 @@ int main(int argc, char **argv)
             if (r) { printf("      locked after %ds\n", i + 1); break; }
         }
     }
-    safe_call(f_rssi, "OneSegDrv_GetRSSI", 0, 0, 0, 0, &r);
-    safe_call(f_cn,   "OneSegDrv_GetCN",   0, 0, 0, 0, &r);
+    /*
+     * GetRSSI and GetCN crashed when called with 0: they take an out-pointer,
+     * not a plain return. Give them somewhere to write. The values are read
+     * back afterwards rather than trusted from the return code.
+     */
+    {
+        long v1 = 0, v2 = 0;
+        if (safe_call(f_rssi, "OneSegDrv_GetRSSI(&v)", (long)&v1, 0, 0, 0, &r) == 0)
+            printf("      RSSI out-param = %ld\n", v1);
+        if (safe_call(f_cn, "OneSegDrv_GetCN(&v)", (long)&v2, 0, 0, 0, &r) == 0)
+            printf("      C/N  out-param = %ld\n", v2);
+    }
+
+    /*
+     * The lower layer has oneseg_start_channel, and the OneSegDrv_* set has
+     * no "start" of its own - so tuning and streaming may well be separate
+     * steps. Try it; a wrong guess is caught by the fault handler.
+     */
+    {
+        void *f_start = dlsym(g_lib, "oneseg_start_channel");
+        if (f_start)
+            safe_call(f_start, "oneseg_start_channel(ch)", channel, 0, 0, 0, &r);
+    }
 
     /* ---- 5. read ---- */
+
+    /*
+     * The stock stack does not just call a read function in a loop. Its
+     * DriverWrap polls the tuner fd first:
+     *
+     *   DMX [DriverWrap, 389] Before Polling. events[0].fd=[17], evetns=[0x1]
+     *   DMX [DriverWrap, 396] After Polling.  retval=[1]. revents=[0x1]
+     *   DMX [DriverWrap, 401] Polling TSI Buffer... retval=[1]
+     *
+     * And this library keeps that descriptor in a global, ghTsDataFileDescr,
+     * alongside queue_read/queue_write. That shape says OneSegDrv_ReadData
+     * drains a queue which something else has to fill - so if nobody services
+     * the interrupt, it returns 0 forever, which is exactly what happened.
+     *
+     * So: find the fd, poll it, and only then call ReadData. And when a poll
+     * says data is ready but ReadData still returns nothing, read the fd
+     * directly - if raw TS comes out that way, ReadData can be bypassed
+     * entirely and the port gets simpler.
+     */
+    {
+        g_tsfd = read_int_sym("ghTsDataFileDescr");
+        if (g_tsfd > 0)
+            printf("\nghTsDataFileDescr = %d - polling it before each read\n", g_tsfd);
+        else
+            printf("\nghTsDataFileDescr not usable (%d) - reading without poll\n", g_tsfd);
+    }
+
     printf("\nreading for %d second(s) ...\n", seconds);
     {
         unsigned char *buf = malloc(TSBUF);
@@ -566,13 +635,49 @@ int main(int argc, char **argv)
             if (out < 0) printf("  cannot write %s: %s\n", outpath, strerror(errno));
         }
 
+        int ready = 0, raw_tried = 0;
+
         while (time(NULL) < deadline) {
+            if (g_tsfd > 0) {
+                struct pollfd pfd;
+                pfd.fd = g_tsfd; pfd.events = POLLIN; pfd.revents = 0;
+                if (poll(&pfd, 1, 200) > 0 && (pfd.revents & POLLIN))
+                    ready++;
+                else
+                    continue;
+            }
+
             memset(buf, 0, TSBUF);
             if (safe_call(f_read, "OneSegDrv_ReadData", (long)buf, TSBUF, 0, 0, &r) < 0)
                 break;
             calls++;
 
-            if (r <= 0) { usleep(100 * 1000); continue; }
+            if (r <= 0) {
+                /* Data was ready but the library handed back nothing. Read the
+                 * descriptor ourselves and see what is actually there. */
+                if (g_tsfd > 0 && !raw_tried) {
+                    ssize_t rn;
+                    raw_tried = 1;
+                    printf("      poll said ready but ReadData gave 0"
+                           " - trying a raw read(%d)\n", g_tsfd);
+                    rn = read(g_tsfd, buf, TSBUF);
+                    if (rn > 0) {
+                        size_t off = 0;
+                        printf("      raw read returned %zd bytes%s\n", rn,
+                               looks_like_ts(buf, (size_t)rn, &off)
+                                   ? " - AND IT IS TS" : "");
+                        printf("      first bytes: %02x %02x %02x %02x\n",
+                               buf[0], buf[1], buf[2], buf[3]);
+                        printf("      If that is TS, the port can skip"
+                               " OneSegDrv_ReadData entirely.\n");
+                    } else {
+                        printf("      raw read returned %zd (%s)\n",
+                               rn, rn < 0 ? strerror(errno) : "empty");
+                    }
+                }
+                if (g_tsfd <= 0) usleep(100 * 1000);
+                continue;
+            }
             if (r > TSBUF) {                       /* not a byte count */
                 printf("      return %ld exceeds the buffer - it is a status,\n"
                        "      not a length. The data may arrive by the callback\n"
@@ -610,7 +715,8 @@ int main(int argc, char **argv)
         if (out >= 0) { fsync(out); close(out); }
         free(buf);
 
-        printf("\n  ReadData calls : %d\n", calls);
+        if (g_tsfd > 0) printf("\n  polls with data: %d\n", ready);
+        printf("  ReadData calls : %d\n", calls);
         printf("  bytes          : %llu\n", total);
         if (outpath) printf("  written to     : %s\n", outpath);
 
