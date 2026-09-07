@@ -451,9 +451,36 @@ def check_port(sysroot, target_dirs):
     Android version you are porting to and this says yes or names what is
     missing.
     """
+    # "ndk" resolves to the NDK's ARM stub libraries for API 28, whose
+    # exported symbols are Android 9's. It saves typing a path six
+    # directories deep that differs on every machine.
+    resolved = []
+    for d in target_dirs:
+        if d == "ndk":
+            found = find_ndk_arm_sysroot()
+            if not found:
+                print("no NDK found in $ANDROID_NDK_HOME, $ANDROID_NDK_ROOT,",
+                      file=sys.stderr)
+                print("~/android-ndk-*, ~/Android/Sdk/ndk/* or /opt/android-ndk-*.",
+                      file=sys.stderr)
+                return 1
+            print("ndk -> %s" % found)
+            resolved.append(found)
+        else:
+            resolved.append(d)
+    target_dirs = resolved
+
     for d in target_dirs:
         if not os.path.isdir(d):
             print("error: %s is not a directory" % d, file=sys.stderr)
+            print(file=sys.stderr)
+            print("--against wants the target Android's own libraries:",
+                  file=sys.stderr)
+            print("  out/target/product/d2dcm/system/lib      after a build",
+                  file=sys.stderr)
+            print("  <extracted LineageOS 16.0 zip>/system/lib", file=sys.stderr)
+            print("  ndk    the NDK's API 28 stubs, found automatically",
+                  file=sys.stderr)
             return 1
 
     # What we intend to ship, found in the survey.
@@ -667,6 +694,8 @@ def main(argv):
         print("\nusage: %s <oneseg-report dir> [--symbols <libname>]"
               % os.path.basename(argv[0]))
         print("       %s <oneseg-report dir> --against <target system/lib dir>"
+              % os.path.basename(argv[0]))
+        print("       %s <oneseg-report dir> --against ndk"
               % os.path.basename(argv[0]))
         return 2
 

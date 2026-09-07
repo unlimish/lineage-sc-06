@@ -213,10 +213,28 @@ fi
 echo
 echo "vendor blobs:"
 
-if [ -d "$ROOT/vendor/samsung/d2att" ] || [ -d "$ROOT/vendor/samsung/d2gsm" ]; then
-    ok "vendor/samsung (d2 common blobs)"
+# Which directory the shared blobs must land in is not a guess -
+# d2att-unified's device.mk reads them back from exactly these two:
+#
+#   $(call inherit-product-if-exists, vendor/samsung/d2-common/d2-common-vendor.mk)
+#   $(call inherit-product-if-exists, vendor/samsung/msm8960-common/msm8960-common-vendor.mk)
+#
+# "if-exists" is the dangerous part. With no blobs the build still succeeds
+# and hands you a flashable zip with no graphics, audio or radio, and
+# nothing says so at build time. This check is the only thing that will.
+D2COMMON=""
+for d in msm8960-common d2-common; do
+    [ -d "$ROOT/vendor/samsung/$d" ] && D2COMMON="$ROOT/vendor/samsung/$d" && break
+done
+if [ -n "$D2COMMON" ]; then
+    ok "vendor/samsung/$(basename "$D2COMMON") (d2 common blobs)"
 else
-    note "d2 common blobs not extracted yet"
+    bad "d2 common blobs not extracted - no vendor/samsung/msm8960-common"
+    info "The build will still SUCCEED without them and produce a ROM with"
+    info "no graphics, audio or radio: device.mk uses inherit-product-if-exists."
+    info "d2att's own extract-files.sh does not run (it is a CyanogenMod-era"
+    info "script for a tree layout that no longer exists). Use:"
+    info "  tools/extract-d2att.sh"
 fi
 
 [ -d "$ROOT/vendor/samsung/d2dcm" ] \
@@ -310,19 +328,19 @@ fi
 # blob list. d2dcm is meant to hold only what is docomo-specific, so an
 # overlap is a bug in proprietary-files.txt rather than something to work
 # around in the makefiles.
-A="$ROOT/vendor/samsung/d2att/proprietary"
+A="$D2COMMON/proprietary"
 B="$ROOT/vendor/samsung/d2dcm/proprietary"
-if [ -d "$A" ] && [ -d "$B" ]; then
+if [ -n "$D2COMMON" ] && [ -d "$A" ] && [ -d "$B" ]; then
     dupes="$( { ( cd "$A" && find . -type f | sed 's|^\./||' )
                 ( cd "$B" && find . -type f | sed 's|^\./||' ) ; } \
               | sort | uniq -d )"
     if [ -n "$dupes" ]; then
-        bad "the same blob is claimed by both d2att and d2dcm:"
+        bad "the same blob is claimed by both $(basename "$D2COMMON") and d2dcm:"
         echo "$dupes" | head -20 | sed 's/^/       /'
         info "Remove these from d2dcm/proprietary-files.txt - the shared d2"
         info "blobs are d2att-unified's job - then re-extract d2dcm."
     else
-        ok "no blob claimed by both d2att and d2dcm"
+        ok "no blob claimed by both $(basename "$D2COMMON") and d2dcm"
     fi
 fi
 
