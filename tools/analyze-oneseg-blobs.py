@@ -408,7 +408,41 @@ def show_symbols(sysroot, pattern):
 PORT_LIBS = ["libonesegdmxdriver.so", "libonesegutils.so", "libPGL.so"]
 
 
-def check_port(sysroot, target_dir):
+def find_ndk_arm_sysroot():
+    """Locate the NDK's 32-bit ARM stub libraries for API 28.
+
+    The NDK ships, per API level, a stub .so for each library it exposes.
+    A stub carries no code - only the exported symbol list - which is
+    exactly what a link-time and load-time check needs, and that list is
+    generated from the platform, so API 28's stubs are Android 9's symbols.
+
+    Printing "$NDK/toolchains/..." and leaving the reader to substitute is
+    how this project already lost two attempts to a literal path, so find
+    the real one and print that.
+    """
+    import glob
+    roots = []
+    for var in ("ANDROID_NDK_HOME", "ANDROID_NDK_ROOT", "ANDROID_NDK", "NDK"):
+        v = os.environ.get(var)
+        if v:
+            roots.append(v)
+    roots += sorted(glob.glob(os.path.expanduser("~/android-ndk-*")))
+    roots += sorted(glob.glob(os.path.expanduser("~/Android/Sdk/ndk/*")))
+    roots += sorted(glob.glob("/opt/android-ndk-*"))
+    roots += sorted(glob.glob("/usr/lib/android-ndk"))
+
+    for r in roots:
+        for host in ("linux-x86_64", "darwin-x86_64"):
+            for api in ("28", "27", "26"):
+                d = os.path.join(r, "toolchains", "llvm", "prebuilt", host,
+                                 "sysroot", "usr", "lib",
+                                 "arm-linux-androideabi", api)
+                if os.path.isdir(d) and os.path.exists(os.path.join(d, "libc.so")):
+                    return d
+    return None
+
+
+def check_port(sysroot, target_dirs):
     """Will the three shipped libraries load on another Android version?
 
     That question is answerable without building anything. A library loads if
@@ -417,9 +451,10 @@ def check_port(sysroot, target_dir):
     Android version you are porting to and this says yes or names what is
     missing.
     """
-    if not os.path.isdir(target_dir):
-        print("error: %s is not a directory" % target_dir, file=sys.stderr)
-        return 1
+    for d in target_dirs:
+        if not os.path.isdir(d):
+            print("error: %s is not a directory" % d, file=sys.stderr)
+            return 1
 
     # What we intend to ship, found in the survey.
     ours = {}
@@ -431,7 +466,9 @@ def check_port(sysroot, target_dir):
 
     # What the target Android provides.
     print("=" * 72)
-    print("Port check: the 1seg libraries against %s" % target_dir)
+    print("Port check: the 1seg libraries against")
+    for d in target_dirs:
+        print("  %s" % d)
     print("=" * 72)
     print()
 
@@ -446,7 +483,7 @@ def check_port(sysroot, target_dir):
     provided = {}          # symbol -> library that defines it
     target_libs = set()
     n_scanned = 0
-    for path in walk_elfs(target_dir):
+    for path in (q for d in target_dirs for q in walk_elfs(d)):
         try:
             elf = Elf(path)
         except (ElfError, struct.error, OSError):
@@ -467,6 +504,68 @@ def check_port(sysroot, target_dir):
         print("of the target build - e.g. the system/lib/ inside an extracted")
         print("LineageOS 16.0 zip for a d2 device.")
         return 1
+
+    # Is this actually an Android system/lib?
+    #
+    # Point --against at the wrong directory and this tool will happily
+    # report that every libc symbol is unresolved and every DT_NEEDED is
+    # missing. That reads like a devastating verdict on the port and means
+    # nothing at all - the target simply had no libc in it. Everything these
+    # three libraries import comes from the C library and Android's core
+    # utility libraries, so a target without libc.so cannot answer the
+    # question and must not pretend to.
+    base_absent = [n for n in ("libc.so", "libm.so", "libdl.so")
+                   if n not in target_libs]
+    if "libc.so" in base_absent:
+        print()
+        print("=" * 72)
+        print("STOP - that is not an Android system/lib.")
+        print("=" * 72)
+        print()
+        print("No libc.so among the %d objects scanned. Every symbol these"
+              % n_scanned)
+        print("libraries import comes from libc and Android's core utility")
+        print("libraries, so against this target everything would come back")
+        print("'unresolved' and none of it would mean anything.")
+        print()
+        print("A common mistake is pointing --against at the extracted blobs")
+        print("themselves (vendor/samsung/d2dcm/proprietary/lib). That is the")
+        print("thing being checked, not the thing to check it against.")
+        print()
+        print("What --against wants is the target Android's own libraries:")
+        print()
+        print("  out/target/product/d2dcm/system/lib      after a build")
+        print("  <extracted LineageOS 16.0 zip>/system/lib")
+        print()
+        print("If you have neither yet, the NDK ships stub libraries whose")
+        print("exported symbols are exactly Android 9's, which settles most of")
+        print("the question today.")
+        print()
+        ndk = find_ndk_arm_sysroot()
+        if ndk:
+            print("Found one on this machine. This command runs as written:")
+            print()
+            print("  %s \\" % sys.argv[0])
+            print("      %s \\" % sysroot)
+            print("      --against %s" % ndk)
+        else:
+            print("No NDK found in $ANDROID_NDK_HOME, ~/android-ndk-*, or")
+            print("~/Android/Sdk/ndk/*. With one installed, the directory to")
+            print("pass is:")
+            print()
+            print("  <ndk>/toolchains/llvm/prebuilt/linux-x86_64/sysroot/\\")
+            print("      usr/lib/arm-linux-androideabi/28")
+        print()
+        print("That covers libc, libm, libdl and liblog. It does not carry")
+        print("libcutils, libutils or libstdc++, so pass those directories as")
+        print("well - --against may be given more than once - or read whatever")
+        print("they would have provided as still-unknown, not as missing.")
+        return 1
+    if base_absent:
+        print("note: the target has no %s. Symbols that would come from"
+              % ", ".join(base_absent))
+        print("      %s are reported as unresolved but are not proven missing."
+              % " or ".join(base_absent))
     print()
 
     # The libraries we ship also satisfy each other.
@@ -541,13 +640,16 @@ def check_port(sysroot, target_dir):
 
 def main(argv):
     args = argv[1:]
-    against = None
-    if "--against" in args:
+    # --against may be repeated, and each may be a comma-separated list. An
+    # Android 9 system/lib is often assembled from more than one place - NDK
+    # stubs for libc and friends, a build tree for libcutils and libutils.
+    against = []
+    while "--against" in args:
         i = args.index("--against")
         if i + 1 >= len(args):
             print("--against needs a directory", file=sys.stderr)
             return 2
-        against = args[i + 1]
+        against.extend(d for d in args[i + 1].split(",") if d)
         del args[i:i + 2]
 
     symbols_of = None
