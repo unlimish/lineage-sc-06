@@ -5,10 +5,20 @@
 # its own. What ueventd does NOT know is who should own it: without a rule it
 # lands as root:root 0600 and nothing in the framework can open it.
 #
+# The values below are not a guess. They are what a stock SC-06D actually has,
+# read off a rooted 4.0.4 unit (SC06DOMAMA2):
+#
+#     crw-rw-rw- system system 225, 0 /dev/isdbt
+#
+# So: owner and group `system`, mode 0666. Samsung left the node world
+# readable and writable. That is loose for a device node, but it is what the
+# stock stack was built against, and a port that tightens it will hit EACCES
+# in places the stock libraries never expected to be refused.
+#
 # The clean fix is a ueventd rule. d2att-unified installs ueventd.qcom.rc to
 # the root of the ramdisk, so the line
 #
-#     /dev/isdbt   0660   media   media
+#     /dev/isdbt   0666   system   system
 #
 # belongs in a d2dcm fork of that file. This .rc is the low-risk alternative:
 # it does the same thing from init, works no matter which ueventd file is
@@ -24,10 +34,11 @@ on post-fs
     # The driver is built in (CONFIG_ISDBT_NMI=y), so it has probed long
     # before post-fs and /dev/isdbt already exists. chown/chmod on a missing
     # path is logged and ignored, so this is safe on a unit without a tuner.
-    chown media media /dev/isdbt
-    chmod 0660 /dev/isdbt
+    chown system system /dev/isdbt
+    chmod 0666 /dev/isdbt
 
-    # Group ownership choice: `media` is what the framework's media stack runs
-    # as, and a 1seg app streams TS into the media pipeline. If the stock
-    # stack turns out to run its own uid, change both lines to match it - the
-    # value has to agree with whatever sepolicy/isdbt.te allows.
+    # Once 1seg works, 0666 is worth revisiting: narrow it to the uid that
+    # actually opens the node and add the matching rule to sepolicy/isdbt.te.
+    # Do that as a separate change, after something is known to work - not
+    # while the stack is still being brought up, or a permission denial will
+    # look like a hardware failure.

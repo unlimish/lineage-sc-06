@@ -18,7 +18,7 @@ SC-06D（Samsung GALAXY S III / docomo / コードネーム **`d2dcm`**）に Li
 | LineageOS を入れる | **できる** | `d2` 系のカーネル／デバイスツリーが lineage-16.0 まで生きている |
 | Android のバージョンを上げる | **Android 9 まで**（純正 4.1.2 から大幅前進） | MSM8960 向けは lineage-16.0 が事実上の上限 |
 | ワンセグのカーネルドライバ | **すでに用意されている** | `drivers/media/nmi326/` が lineage-16.0 のカーネルに残っており、`lineageos_d2dcm_defconfig` で `CONFIG_ISDBT_NMI=y` |
-| ワンセグが実際に映る | **未解決。ここが本丸** | 復調と TS 取得が純正のクローズドな部分にあり、過去の d2dcm 移植でも誰も移植していない（ただし DRM は無い。下記参照） |
+| ワンセグが実際に映る | **未解決。ただし見通しは良い** | 実機調査でスタックを特定済み。`/dev/isdbt` を開くのは **1 つのライブラリだけ**で、依存も軽い → [`docs/07`](docs/07-実機調査の結果.md) |
 
 つまり、
 
@@ -73,6 +73,20 @@ SC-06D はフルセグ非対応なので、**そもそも関係ありません**
 最初の一歩は「純正 ROM のワンセグスタックが何でできているかを実機から吸い出す」ことで、
 そのためのスクリプトを [`tools/oneseg-probe.sh`](tools/oneseg-probe.sh) に用意しました。
 
+### 実機調査の結果（2026年9月・Android 4.0.4 実機）
+
+実際に SC-06D を調べた結果、**見通しは想定より良い**ことが分かりました。
+
+- `/dev/isdbt` を開いているのは **`libonesegdmxdriver.so` ただ 1 つ**
+- その依存は `libonesegutils.so` → `libPGL.so` と AOSP の基本ライブラリだけ。
+  **移植対象の独自ライブラリは 3 つ**
+- しかも **`libbinder` / `libandroid_runtime` / `libsurfaceflinger_client` を要求しない**
+  （後者は Android 9 に存在しないライブラリ。これを避けられるのが大きい）
+- 暗号（CPRM）は**録画パス**にあり、受信パスには無い
+- データ放送（DSM-CC/BML）と NexPlayer は**移植不要**
+
+詳細と次の一手は [`docs/07-実機調査の結果.md`](docs/07-実機調査の結果.md)。
+
 **ワンセグが最優先なら**、純正のまま root だけ取る、という選択肢も真剣に検討してください。
 [`docs/01-結論と実現可能性.md`](docs/01-結論と実現可能性.md) に判断材料をまとめています。
 
@@ -88,12 +102,13 @@ docs/                            ドキュメント（日本語）
   04-書き込み手順.md              SC-06D への書き込みと復旧
   05-ワンセグ移植の手順.md        ワンセグを通すための段階的な攻略手順
   06-調査ログ.md                  上の結論の一次ソース（実際に確認したコード）
+  07-実機調査の結果.md            ★実機 SC-06D から判明した事実（唯一の実測データ）
 
 device/samsung/d2dcm/            SC-06D 用デバイスツリー（LineageOS 16.0 向け・未検証）
   BoardConfig.mk                 d2att-unified を継承して SC-06D 差分を上書き
   device.mk / lineage_d2dcm.mk   製品定義
   system.prop                    docomo 向けプロパティ
-  proprietary-files.txt          純正から抜くファイル一覧（ワンセグ分は要調査）
+  proprietary-files.txt          純正から抜くファイル一覧（ワンセグ分は実機で特定済み）
   extract-files.sh               純正 ROM / 実機から blob を抽出
   rootdir/etc/init.oneseg.rc     /dev/isdbt のパーミッション
   sepolicy/                      SELinux ポリシー（isdbt デバイス）
@@ -102,7 +117,7 @@ kernel/patches/                  SPI 通信トレース用パッチ（ドライ�
 manifests/local_manifest.xml     repo sync 用マニフェスト
 tools/
   oneseg-probe.sh                純正 ROM のワンセグスタックを実機から調査する（最重要）
-  analyze-oneseg-blobs.py        調査結果の ELF 依存関係を解析する
+  analyze-oneseg-blobs.py        ELF 依存関係の解析 / --symbols でエクスポート関数一覧
   link-device-tree.sh            d2dcm ツリーを Lineage ツリーに繋ぐ
   verify-tree.sh                 ビルド前の静的チェック
 ```
@@ -170,9 +185,13 @@ bash tools/oneseg-probe.sh
 
 ```bash
 python3 tools/analyze-oneseg-blobs.py oneseg-report/
+
+# チューナを叩くライブラリの API（エクスポート関数）を見る
+python3 tools/analyze-oneseg-blobs.py oneseg-report/ --symbols libonesegdmxdriver
 ```
 
 **これがないとワンセグ移植は始まりません。**
+既知の結果は [`docs/07-実機調査の結果.md`](docs/07-実機調査の結果.md) にあります。
 
 ### 2. LineageOS 16.0 をビルドする
 

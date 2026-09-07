@@ -12,13 +12,20 @@ list, and which of those dependencies are missing from the pull. Anything
 listed as missing is a library the port has to supply on Android 9 - and each
 one is a place the linker can refuse to load the stack.
 
+To see the API a library actually offers - which is what you need in order to
+call it yourself instead of shipping the stock app:
+
+    ./tools/analyze-oneseg-blobs.py oneseg-report/ --symbols libonesegdmxdriver
+
 Pure standard library on purpose: this has to run on whatever machine happens
-to have the phone plugged into it, without pip.
+to have the phone plugged into it, without pip. C++ names are demangled with
+c++filt when it is installed, and shown mangled when it is not.
 """
 
 import os
 import re
 import struct
+import subprocess
 import sys
 from collections import OrderedDict
 
@@ -87,14 +94,15 @@ class Elf:
         self.end = "<" if ei_data == 1 else ">"
 
         if self.is64:
-            # e_type, e_machine, e_version, e_entry, e_phoff, ...
-            (self.e_type, self.e_machine, _, _entry, self.e_phoff, _shoff,
-             _flags, _ehsize, self.e_phentsize, self.e_phnum) = struct.unpack_from(
-                self.end + "HHIQQQIHHH", d, 16)
+            (self.e_type, self.e_machine, _, _entry, self.e_phoff, self.e_shoff,
+             _flags, _ehsize, self.e_phentsize, self.e_phnum,
+             self.e_shentsize, self.e_shnum, _shstrndx) = struct.unpack_from(
+                self.end + "HHIQQQIHHHHHH", d, 16)
         else:
-            (self.e_type, self.e_machine, _, _entry, self.e_phoff, _shoff,
-             _flags, _ehsize, self.e_phentsize, self.e_phnum) = struct.unpack_from(
-                self.end + "HHIIIIIHHH", d, 16)
+            (self.e_type, self.e_machine, _, _entry, self.e_phoff, self.e_shoff,
+             _flags, _ehsize, self.e_phentsize, self.e_phnum,
+             self.e_shentsize, self.e_shnum, _shstrndx) = struct.unpack_from(
+                self.end + "HHIIIIIHHHHHH", d, 16)
 
         self.machine = MACHINES.get(self.e_machine, "machine-%d" % self.e_machine)
 
@@ -190,6 +198,80 @@ class Elf:
                     rpath.append(r)
         return soname, needed, rpath
 
+    def _shdrs(self):
+        """Yield (sh_type, sh_offset, sh_size, sh_link, sh_entsize)."""
+        d = self.data
+        if not self.e_shoff or not self.e_shnum:
+            return
+        for i in range(self.e_shnum):
+            off = self.e_shoff + i * self.e_shentsize
+            if off + self.e_shentsize > len(d):
+                return
+            if self.is64:
+                (_name, sh_type, _flags, _addr, sh_offset, sh_size,
+                 sh_link, _info, _align, sh_entsize) = struct.unpack_from(
+                    self.end + "IIQQQQIIQQ", d, off)
+            else:
+                (_name, sh_type, _flags, _addr, sh_offset, sh_size,
+                 sh_link, _info, _align, sh_entsize) = struct.unpack_from(
+                    self.end + "IIIIIIIIII", d, off)
+            yield sh_type, sh_offset, sh_size, sh_link, sh_entsize
+
+    def exported_symbols(self):
+        """Names defined and exported by this object, via .dynsym.
+
+        Section headers are used rather than walking DT_HASH, because Android
+        .so files keep them and this stays readable. A fully stripped object
+        returns nothing, which the caller reports rather than hiding.
+        """
+        d = self.data
+        sections = list(self._shdrs())
+        if not sections:
+            return []
+
+        SHT_DYNSYM = 11
+        dynsym = next((s for s in sections if s[0] == SHT_DYNSYM), None)
+        if dynsym is None:
+            return []
+
+        _t, sym_off, sym_size, sym_link, sym_entsize = dynsym
+        if not sym_entsize:
+            sym_entsize = 24 if self.is64 else 16
+        if sym_link >= len(sections):
+            return []
+        _t2, str_off, str_size, _l, _e = sections[sym_link]
+
+        def s(idx):
+            p = str_off + idx
+            if p < str_off or p >= str_off + str_size or p >= len(d):
+                return None
+            e = d.find(b"\x00", p, str_off + str_size)
+            if e < 0:
+                return None
+            return d[p:e].decode("utf-8", "replace")
+
+        out = []
+        n = sym_size // sym_entsize
+        for i in range(n):
+            off = sym_off + i * sym_entsize
+            if off + sym_entsize > len(d):
+                break
+            if self.is64:
+                st_name, st_info, _other, st_shndx, _val, _sz = struct.unpack_from(
+                    self.end + "IBBHQQ", d, off)
+            else:
+                st_name, _val, _sz, st_info, _other, st_shndx = struct.unpack_from(
+                    self.end + "IIIBBH", d, off)
+            if st_shndx == 0:          # SHN_UNDEF - imported, not exported
+                continue
+            bind = st_info >> 4        # 0 LOCAL, 1 GLOBAL, 2 WEAK
+            if bind not in (1, 2):
+                continue
+            name = s(st_name)
+            if name:
+                out.append(name)
+        return sorted(set(out))
+
     def markers(self):
         """Which interesting strings appear in this binary."""
         found = OrderedDict()
@@ -219,13 +301,96 @@ def walk_elfs(root):
             yield path
 
 
+def demangle(names):
+    """Run names through c++filt if it exists; otherwise return them as-is."""
+    if not names:
+        return {}
+    try:
+        p = subprocess.run(["c++filt"], input="\n".join(names),
+                           capture_output=True, text=True, timeout=30)
+        if p.returncode == 0:
+            out = p.stdout.splitlines()
+            if len(out) == len(names):
+                return dict(zip(names, out))
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return {n: n for n in names}
+
+
+def show_symbols(sysroot, pattern):
+    """Print the exported API of every library whose name matches pattern."""
+    hits = [p for p in walk_elfs(sysroot)
+            if pattern.lower() in os.path.basename(p).lower()]
+    if not hits:
+        print("no ELF object under %s matches %r" % (sysroot, pattern))
+        return 1
+
+    for path in sorted(hits):
+        rel = os.path.relpath(path, sysroot)
+        try:
+            elf = Elf(path)
+            syms = elf.exported_symbols()
+        except (ElfError, struct.error, OSError) as e:
+            print("%s: cannot read (%s)" % (rel, e))
+            continue
+
+        print("=" * 72)
+        print("%s  [%s]  %d exported symbol(s)" % (rel, elf.machine, len(syms)))
+        print("=" * 72)
+
+        if not syms:
+            print("  none - the object is stripped of section headers, or")
+            print("  exports nothing (a plugin loaded only by dlsym).")
+            print()
+            continue
+
+        dm = demangle(syms)
+        # C++ entry points first: those carry the argument types, which is the
+        # part you cannot guess.
+        cpp = [n for n in syms if n.startswith("_Z")]
+        plain = [n for n in syms if not n.startswith("_Z")]
+
+        if cpp:
+            print("  C++ (demangled):")
+            for n in cpp:
+                print("    %s" % dm.get(n, n))
+            print()
+        if plain:
+            print("  C / extern \"C\":")
+            for n in plain:
+                print("    %s" % n)
+            print()
+
+    print("-" * 72)
+    print("These are the functions the port can call directly. Look for a")
+    print("power/open call, a tune-by-channel or by-frequency call, and a read")
+    print("that hands back TS. Those three are the whole minimum API.")
+    print()
+    print("Cross-check against the ioctls in the GPL driver")
+    print("(drivers/media/nmi326/nmi326.h) - the library is the only thing that")
+    print("knows what bytes to push through them.")
+    return 0
+
+
 def main(argv):
-    if len(argv) != 2:
+    args = argv[1:]
+    symbols_of = None
+    if "--symbols" in args:
+        i = args.index("--symbols")
+        if i + 1 >= len(args):
+            print("--symbols needs a library name, e.g. --symbols libonesegdmxdriver",
+                  file=sys.stderr)
+            return 2
+        symbols_of = args[i + 1]
+        del args[i:i + 2]
+
+    if len(args) != 1:
         print(__doc__.strip())
-        print("\nusage: %s <oneseg-report dir>" % os.path.basename(argv[0]))
+        print("\nusage: %s <oneseg-report dir> [--symbols <libname>]"
+              % os.path.basename(argv[0]))
         return 2
 
-    report = argv[1]
+    report = args[0]
     if not os.path.isdir(report):
         print("error: %s is not a directory" % report, file=sys.stderr)
         return 1
@@ -234,6 +399,9 @@ def main(argv):
     sysroot = os.path.join(report, "system")
     if not os.path.isdir(sysroot):
         sysroot = report
+
+    if symbols_of:
+        return show_symbols(sysroot, symbols_of)
 
     print("=" * 72)
     print("SC-06D 1seg blob analysis")

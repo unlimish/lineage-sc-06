@@ -51,27 +51,85 @@ app/WAPPushManager.apk
 app/SPModePushNotifier.apk
 
 # =============================================================================
-# ISDB-T / 1seg (ワンセグ)  --  NOT YET FILLED IN
+# ISDB-T / 1seg (ワンセグ)
 # =============================================================================
 #
-# This section is empty on purpose. The exact file names are unknown: no
-# published d2dcm tree has ever carried the 1seg stack, and this repository
-# has not been run against real SC-06D hardware.
+# Identified on a stock SC-06D (4.0.4, SC06DOMAMA2) with tools/oneseg-probe.sh
+# and tools/analyze-oneseg-blobs.py. The names were not guessed: the probe
+# searched the binaries for the literal "/dev/isdbt", and the tiers below
+# follow the DT_NEEDED graph out from the one library that matched.
 #
-# To fill it in, run tools/oneseg-probe.sh against a rooted, stock 4.1.2
-# SC-06D. It writes oneseg-report/proprietary-files.oneseg.txt, whose contents
-# go directly below this comment.
+# The tiers matter. Do NOT uncomment all of this at once - see
+# docs/07-実機調査の結果.md for why, and docs/05 for the order to work in.
+
+# --- Tier 1: the minimum to reach the tuner -----------------------------
 #
-# Expect roughly:
-#   lib/lib<something>.so          tuner / demod control
-#   lib/lib<something>.so          TS demux, EPG, captions
-#   etc/firmware/<something>       NMI326 firmware image
-#   app/<something>.apk            the 1seg application
-#   framework/<something>.jar      framework glue
-#   etc/permissions/<something>.xml
+# libonesegdmxdriver.so is the ONLY object in the whole system image that
+# opens /dev/isdbt. Its dependency set is remarkably small, and - this is the
+# important part - it does NOT pull in libbinder, libandroid_runtime or
+# libsurfaceflinger_client, the three things that would make a Jelly Bean
+# blob unloadable on Pie.
 #
-# There is no DRM to carry across: 1seg is broadcast unscrambled, so viewing
-# needs no B-CAS card and no RMP key (RMP is a full-seg mechanism and SC-06D
-# has no full-seg). Content-protection libraries here would be about
-# protecting *recordings*, which reception does not depend on.
-# See docs/02-ワンセグの構造と壁.md section 4.
+#   libonesegdmxdriver.so -> libonesegutils.so -> libPGL.so
+#                         -> liblog, libcutils, libutils, libc, libstdc++, libm
+#
+# Three proprietary files. That is the whole tuner path.
+#
+# lib/libonesegdmxdriver.so
+# lib/libonesegutils.so
+# lib/libPGL.so
+
+# --- Tier 2: the stock TS demuxer ---------------------------------------
+#
+# Only needed if you want Samsung's demuxer rather than your own. It drags in
+# libbinder and libandroid_runtime, so it is much harder to load on Pie - and
+# a 1seg TS is plain MPEG-2 TS, which anything can demux. Prefer your own.
+#
+# libonesegcprmapi.so is CPRM, the protection applied to *recordings* on SD
+# card. It reads key material from /efs/. Reception does not need it.
+#
+# lib/libonesegdemux.so
+# lib/libsdtvphmem.so
+# lib/libsdtvcrypto.so
+# lib/libonesegcprmapi.so
+# lib/libBroadcastProcObs.so
+# bin/OneSegTsDemux
+# bin/broadcastProcessObserver
+
+# --- Tier 3: service and EPG layer, and the app glue ---------------------
+#
+# The Java-facing side. Needed only if the stock application is the goal.
+# Note that MobileTV_JPN.apk ships with a separate .odex, built against the
+# 4.0.4 Dalvik boot classpath - it must be deodexed, and even then it targets
+# an API level Pie will not treat kindly. Writing a small player is likely
+# less work than making this run.
+#
+# lib/libSDtvService.so
+# lib/libSDtvStack.so
+# lib/libbroadcastForOneSeg_jni.so
+# lib/libbroadcast_upgrade_jni.so
+# lib/libOneSegfactorytest_jni.so
+# app/MobileTV_JPN.apk
+
+# --- Tier 4: data broadcasting (DSM-CC / BML) -- DO NOT PORT -------------
+#
+# This is データ放送, and the service is gone: NHK ended it 2025-03-30, TBS
+# 2025-02-21, フジ 2025-03-31, テレ東 2025-04-20, テレ朝 2026-03-30, 日テレ
+# 2026-03-31, TOKYO MX 2026-05-28. Porting it would be work for a signal that
+# is no longer transmitted.
+#
+#   lib/libonesegdsmcc.so, lib/libonesegbmlpeer.so, lib/libsdsmcc.so
+#   lib/libonesegsp.so, lib/libBML.so, lib/libBMLJNI.so, bin/OneSegDsmcc
+
+# --- Tier 5: NexPlayer -- DO NOT PORT ------------------------------------
+#
+# libnexplayerservice.so is the stock video engine. It needs
+# libsurfaceflinger_client.so, which does not exist on Android 9 at all, plus
+# libandroid_runtime.so and libgui.so. It is not portable, and it does not
+# need to be: MediaCodec decodes H.264 + AAC natively.
+
+# --- Not 1seg, despite the name -----------------------------------------
+#
+# libMciAtscMh.so is ATSC-M/H, the US mobile TV standard. It mentions ISDBT
+# in passing and is unrelated to ワンセグ. bin/at_distributor is the AT
+# command daemon; it references ISDBT only for a factory-test command.

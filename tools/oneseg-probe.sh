@@ -240,12 +240,84 @@ hdr "4. pulling /system (this takes a few minutes)"
 
 mkdir -p "$PULL_DIR"
 
-for d in lib etc framework bin; do
+# adb pull of a system directory routinely stops part-way on a 4.x device:
+# setuid binaries and dangling symlinks under /system/bin and /system/etc make
+# it give up, and it says "could not be pulled" without saying what is missing.
+#
+# The fallback copies the directory to /sdcard as root first. /sdcard is a
+# FAT-like mount that drops ownership and permission bits entirely, so nothing
+# there can refuse to be read, and the pull then succeeds. It costs a round
+# trip through internal storage, which is why it is a fallback and not the
+# default.
+SDTMP=/sdcard/oneseg-probe-tmp
+
+pull_dir() {
+    local d="$1"
     say "pulling /system/$d ..."
-    adb pull "/system/$d" "$PULL_DIR/$d" >>"$LOG" 2>&1 \
-        && ok "/system/$d" \
-        || warn "/system/$d could not be pulled in full"
+
+    if adb pull "/system/$d" "$PULL_DIR/$d" >>"$LOG" 2>&1; then
+        ok "/system/$d ($(find "$PULL_DIR/$d" -type f 2>/dev/null | wc -l) files)"
+        return 0
+    fi
+
+    local direct
+    direct=$(find "$PULL_DIR/$d" -type f 2>/dev/null | wc -l)
+    warn "/system/$d: direct pull incomplete ($direct files) - retrying via /sdcard"
+
+    if [ "$HAVE_ROOT" != "1" ]; then
+        warn "  cannot retry without root; keeping what was pulled"
+        return 1
+    fi
+
+    dsu "rm -rf $SDTMP/$d" >/dev/null 2>&1
+    dsu "mkdir -p $SDTMP" >/dev/null 2>&1
+    dsu "cp -r /system/$d $SDTMP/$d" >/dev/null 2>&1
+
+    rm -rf "$PULL_DIR/$d.retry"
+    if adb pull "$SDTMP/$d" "$PULL_DIR/$d.retry" >>"$LOG" 2>&1; then
+        local got
+        got=$(find "$PULL_DIR/$d.retry" -type f 2>/dev/null | wc -l)
+        if [ "$got" -gt "$direct" ]; then
+            rm -rf "$PULL_DIR/$d"
+            mv "$PULL_DIR/$d.retry" "$PULL_DIR/$d"
+            ok "/system/$d recovered via /sdcard ($got files, was $direct)"
+        else
+            rm -rf "$PULL_DIR/$d.retry"
+            warn "  retry got no more than the direct pull ($got); keeping the original"
+        fi
+    else
+        rm -rf "$PULL_DIR/$d.retry"
+        warn "  retry also failed; keeping what was pulled"
+    fi
+
+    dsu "rm -rf $SDTMP/$d" >/dev/null 2>&1
+}
+
+for d in lib etc framework bin; do
+    pull_dir "$d"
 done
+
+dsu "rmdir $SDTMP" >/dev/null 2>&1
+
+# The NMI326 needs firmware loaded over SPI at power-on, and nothing public
+# says where it lives. Call it out explicitly rather than leaving it buried in
+# a directory listing.
+say ""
+say "looking for tuner firmware ..."
+for fwdir in "$PULL_DIR/etc/firmware" "$PULL_DIR/etc"; do
+    [ -d "$fwdir" ] || continue
+    find "$fwdir" -maxdepth 2 -type f 2>/dev/null \
+        | grep -iE 'nmi|isdb|1seg|oneseg|dtv|tuner' >> "$REPORT_DIR/firmware-candidates.txt" 2>/dev/null
+done
+sort -u "$REPORT_DIR/firmware-candidates.txt" -o "$REPORT_DIR/firmware-candidates.txt" 2>/dev/null
+if [ -s "$REPORT_DIR/firmware-candidates.txt" ]; then
+    ok "possible tuner firmware -> firmware-candidates.txt"
+    sed 's/^/    /' "$REPORT_DIR/firmware-candidates.txt" | tee -a "$LOG"
+else
+    say "no firmware file with an obvious name."
+    say "  It may be compiled into libonesegdmxdriver.so as a byte array - check"
+    say "  the library's size against what it plausibly needs to be."
+fi
 
 # Listings for the big directories; the apks themselves are pulled selectively
 # in step 5 once we know which ones matter.
@@ -329,6 +401,28 @@ if [ -s "$REPORT_DIR/apps-candidates.txt" ]; then
         done
     done
     ok "candidate apks pulled into system/app/"
+
+    # An apk can carry its own native libraries under lib/armeabi*/. Unpack
+    # them so the ELF analyser sees them alongside the /system/lib ones.
+    if command -v unzip >/dev/null 2>&1; then
+        for apk in "$PULL_DIR"/app/*.apk; do
+            [ -f "$apk" ] || continue
+            unzip -o -q -j "$apk" 'lib/armeabi*/*' \
+                -d "$PULL_DIR/app/$(basename "$apk" .apk)-libs" >/dev/null 2>&1
+        done
+        n=$(find "$PULL_DIR"/app -name '*.so' 2>/dev/null | wc -l)
+        [ "$n" -gt 0 ] && ok "  $n native lib(s) unpacked from the apk(s)"
+    fi
+
+    # A .odex next to the apk means the app was pre-compiled against this
+    # device's 4.x boot classpath. It cannot be moved to another Android
+    # version without deodexing first, and on Pie (ART) the Dalvik odex is
+    # useless anyway - which is a reason to write a small player instead of
+    # trying to revive the stock app.
+    if grep -qi '\.odex' "$REPORT_DIR/apps-candidates.txt" 2>/dev/null; then
+        warn "  the 1seg app ships a separate .odex - it is bound to Android 4.x"
+        say  "  See docs/07-実機調査の結果.md on why porting the app is the hard road."
+    fi
 else
     warn "no obviously TV-named apk. Widen the search by hand in ls-app.txt."
 fi
