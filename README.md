@@ -124,6 +124,7 @@ manifests/local_manifest.xml     repo sync 用マニフェスト
 tools/
   oneseg-probe.sh                純正 ROM のワンセグスタックを実機から調査する（最重要）
   analyze-oneseg-blobs.py        ELF 依存関係の解析 / --symbols でエクスポート関数一覧
+  build-android.sh               実機用ツールを正しいフラグでビルド＋PIE 検査
   isdbt-dump.c                   /dev/isdbt を開いて電源を入れ、読めたものを保存する
   oneseg-api-probe.c             純正ライブラリを dlopen してチューナ API を直接叩く
   link-device-tree.sh            d2dcm ツリーを Lineage ツリーに繋ぐ

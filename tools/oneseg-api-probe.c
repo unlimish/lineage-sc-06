@@ -47,17 +47,23 @@
  *   unzip -q android-ndk-r21e-linux-x86_64.zip
  *   export ANDROID_NDK="$HOME/android-ndk-r21e"
  *
- * Then, from the repository root:
+ * Then, from the repository root. The -no-pie flags are NOT optional:
  *
  *   "$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi16-clang" \
- *       -O2 -o oneseg-api-probe tools/oneseg-api-probe.c -ldl
+ *       -fno-pie -no-pie -O2 -o oneseg-api-probe tools/oneseg-api-probe.c -ldl
  *
- * Check it before pushing - "file oneseg-api-probe" should say
- * "ELF 32-bit LSB ... ARM ... dynamically linked".
+ * WHY NON-PIE. The dynamic linker only learned to load position-independent
+ * executables in Android 4.1 (API 16). This device runs 4.0.4, which is API
+ * 15, and its linker crashes on a PIE binary before main() is ever entered -
+ * a bare "Segmentation fault" with no output.
  *
- * r21e is deliberate: it is the last NDK series that still targets API 16,
- * and this device is API 15. Newer NDKs start at API 21 and their binaries
- * will not start here.
+ * NDK r21 cannot target below API 16 for 32-bit ARM, and at API 16 it builds
+ * PIE by default, so PIE has to be turned off explicitly.
+ *
+ * Check with file(1). The word that matters is "executable":
+ *
+ *   ELF 32-bit LSB executable, ARM, EABI5 ...      <- correct
+ *   ELF 32-bit LSB shared object, ARM, EABI5 ...   <- PIE, will not run
  *
  * RUN
  *
@@ -269,6 +275,12 @@ int main(int argc, char **argv)
         }
     }
     if (seconds <= 0) seconds = 10;
+
+    /* Unbuffered: piped through "adb shell su -c", stdout is fully buffered,
+     * so anything printed before a crash is lost with the buffer. That is how
+     * a segfault inside dlopen came back as a bare "Segmentation fault" with
+     * no output at all. */
+    setvbuf(stdout, NULL, _IONBF, 0);
 
     printf("oneseg-api-probe\n================\n\n");
 

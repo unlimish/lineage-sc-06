@@ -176,6 +176,12 @@ int main(int argc, char **argv)
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
 
+    /* Unbuffered: piped through "adb shell su -c", stdout is fully buffered,
+     * so anything printed before a crash is lost with the buffer. That is how
+     * a segfault inside dlopen came back as a bare "Segmentation fault" with
+     * no output at all. */
+    setvbuf(stdout, NULL, _IONBF, 0);
+
     printf("isdbt-dump - SC-06D tuner path check\n");
     printf("====================================\n\n");
 
