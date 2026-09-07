@@ -255,6 +255,12 @@ pull_dir() {
     local d="$1"
     say "pulling /system/$d ..."
 
+    # adb pull into an existing directory nests: "adb pull /system/lib DEST/lib"
+    # lands as DEST/lib/lib when DEST/lib is already there. Re-running the
+    # script would then double every library, and the analyser would report
+    # each one twice. Clear the destination first so a re-run is idempotent.
+    rm -rf "$PULL_DIR/$d"
+
     if adb pull "/system/$d" "$PULL_DIR/$d" >>"$LOG" 2>&1; then
         ok "/system/$d ($(find "$PULL_DIR/$d" -type f 2>/dev/null | wc -l) files)"
         return 0
@@ -292,6 +298,15 @@ pull_dir() {
 
     dsu "rm -rf $SDTMP/$d" >/dev/null 2>&1
 }
+
+# A report made by an earlier version of this script can already contain the
+# nested copies. Say so rather than silently double-counting them.
+for d in lib etc framework bin; do
+    if [ -d "$PULL_DIR/$d/$d" ]; then
+        warn "found a nested $PULL_DIR/$d/$d from an earlier run - removing it"
+        rm -rf "$PULL_DIR/$d/$d"
+    fi
+done
 
 for d in lib etc framework bin; do
     pull_dir "$d"

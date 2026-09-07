@@ -18,14 +18,29 @@
  * nothing at all, or bytes that are not TS. Both are useful results: they
  * tell you the path to the chip is open.
  *
- * Build (NDK r21 or newer; the last release with a 32-bit ARM sysroot for
- * old API levels - newer NDKs dropped API 21 armeabi-v7a support in stages):
+ * Build. Two routes; the first needs no Android SDK at all.
  *
- *   $ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi21-clang \
- *       -static -O2 -o isdbt-dump tools/isdbt-dump.c
+ *   A. Debian/Ubuntu cross-compiler (easiest - this program only uses POSIX,
+ *      and a fully static binary does not care that the target runs Bionic):
  *
- * -static matters: a dynamically linked binary built against a new NDK will
- * not run on Android 4.0.4, whose linker and libc are far older.
+ *        sudo apt install gcc-arm-linux-gnueabihf
+ *        arm-linux-gnueabihf-gcc -static -O2 -o isdbt-dump tools/isdbt-dump.c
+ *
+ *      If that binary will not run on the phone, try the soft-float variant:
+ *        sudo apt install gcc-arm-linux-gnueabi
+ *        arm-linux-gnueabi-gcc -static -O2 -o isdbt-dump tools/isdbt-dump.c
+ *
+ *   B. Android NDK (needed only if you later link against Bionic libraries):
+ *
+ *        export ANDROID_NDK=/path/to/android-ndk-r21e
+ *        "$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi16-clang" \
+ *            -static -O2 -o isdbt-dump tools/isdbt-dump.c
+ *
+ *      Set ANDROID_NDK to the real directory - there is no "..." in the path.
+ *      Use r21e or older: newer NDKs dropped the API levels this device needs.
+ *
+ * Either way, -static matters. A dynamically linked binary built against a
+ * modern toolchain will not start on Android 4.0.4.
  *
  * Run:
  *

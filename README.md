@@ -18,7 +18,7 @@ SC-06D（Samsung GALAXY S III / docomo / コードネーム **`d2dcm`**）に Li
 | LineageOS を入れる | **できる** | `d2` 系のカーネル／デバイスツリーが lineage-16.0 まで生きている |
 | Android のバージョンを上げる | **Android 9 まで**（純正 4.1.2 から大幅前進） | MSM8960 向けは lineage-16.0 が事実上の上限 |
 | ワンセグのカーネルドライバ | **すでに用意されている** | `drivers/media/nmi326/` が lineage-16.0 のカーネルに残っており、`lineageos_d2dcm_defconfig` で `CONFIG_ISDBT_NMI=y` |
-| ワンセグが実際に映る | **未解決。ただし見通しは良い** | 実機調査でスタックを特定済み。`/dev/isdbt` を開くのは **1 つのライブラリだけ**で、依存も軽い → [`docs/07`](docs/07-実機調査の結果.md) |
+| ワンセグが実際に映る | **未解決。ただし道筋は見えた** | 実機調査でスタックと**チューナ API を特定済み**（`OneSegDrv_SetChannel` / `ReadData` など、C リンケージで `dlsym` 可能）→ [`docs/07`](docs/07-実機調査の結果.md) |
 
 つまり、
 
@@ -86,6 +86,9 @@ SC-06D はフルセグ非対応なので、**そもそも関係ありません**
   **録画を「TS をそのまま書く」方式にすると決めた**ので、CPRM ごと移植対象外
   → 純正から持ち込むのは**上記 3 ファイルで全部**（[`docs/08`](docs/08-アプリ設計.md)）
 - データ放送（DSM-CC/BML）と NexPlayer は**移植不要**
+- **チューナ API が判明**: `libonesegdmxdriver.so` は 141 シンボルを C リンケージで
+  公開しており、`OneSegDrv_Initailze` / `SetChannel` / `ReadData` / `CheckChannelLock`
+  がそのまま `dlsym` で呼べます。**純正 ROM のまま、焼く前に検証できます**
 
 詳細と次の一手は [`docs/07-実機調査の結果.md`](docs/07-実機調査の結果.md)。
 
@@ -122,6 +125,7 @@ tools/
   oneseg-probe.sh                純正 ROM のワンセグスタックを実機から調査する（最重要）
   analyze-oneseg-blobs.py        ELF 依存関係の解析 / --symbols でエクスポート関数一覧
   isdbt-dump.c                   /dev/isdbt を開いて電源を入れ、読めたものを保存する
+  oneseg-api-probe.c             純正ライブラリを dlopen してチューナ API を直接叩く
   link-device-tree.sh            d2dcm ツリーを Lineage ツリーに繋ぐ
   verify-tree.sh                 ビルド前の静的チェック
 ```
